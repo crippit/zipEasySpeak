@@ -8,7 +8,12 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+      // Allow PWA to work in development mode (npm run dev)
+      devOptions: {
+        enabled: true
+      },
+      // Removed favicon.ico, using the PNGs from public folder instead
+      includeAssets: ['pwa-192x192.png', 'pwa-512x512.png', 'mask-icon.svg'],
       manifest: {
         name: 'Zip EasySpeak',
         short_name: 'EasySpeak',
