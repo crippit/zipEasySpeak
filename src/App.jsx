@@ -15,7 +15,7 @@ import {
   Image as ImageIcon,
   MessageSquare,
   LayoutGrid,
-  Zap // Imported the Zap icon for the logo
+  Zap // Kept for reference, though we are swapping the logo
 } from 'lucide-react';
 
 /**
@@ -326,9 +326,14 @@ export default function App() {
         
         {/* Branding (Top of Sidebar) */}
         <div className="hidden md:flex flex-col items-center justify-center py-4 border-b border-slate-100 mb-2">
-           <div className="bg-yellow-400 text-white p-2 rounded-lg shadow-sm mb-1">
-             <Zap size={24} fill="currentColor" />
-           </div>
+           {/* Replaced Zap Icon with PWA Image */}
+           <img 
+             src="/pwa-192x192.png" 
+             alt="Logo" 
+             className="w-10 h-10 rounded-xl shadow-sm mb-1 object-cover" 
+             onError={(e) => { e.target.style.display='none'; }} // Fallback if image fails to load
+           />
+           {/* Fallback text if image fails or just for text branding */}
            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Zip</span>
         </div>
 
@@ -383,9 +388,13 @@ export default function App() {
         {/* Page Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-             <div className="md:hidden bg-yellow-400 text-white p-2 rounded-lg shadow-sm">
-                <Zap size={20} fill="currentColor" />
-             </div>
+             {/* Mobile Logo Replacement */}
+             <img 
+               src="/pwa-192x192.png" 
+               alt="Logo" 
+               className="md:hidden w-8 h-8 rounded-lg shadow-sm object-cover"
+               onError={(e) => { e.target.style.display='none'; }} 
+             />
              <h1 className="text-3xl font-bold flex items-center gap-2">
                {activePage.icon} {activePage.label}
              </h1>
