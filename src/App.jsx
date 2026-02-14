@@ -236,8 +236,16 @@ export default function App() {
   };
 
   // --- Proxy & Search ---
-  const getProxyUrl = (url) => {
+
+  // 1. Text Search Proxy (AllOrigins - good for JSON)
+  const getSearchProxyUrl = (url) => {
     return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+  };
+
+  // 2. Image Download Proxy (Weserv.nl - fast, reliable, handles images specifically)
+  const getImageProxyUrl = (url) => {
+    // weserv takes the url directly
+    return `https://images.weserv.nl/?url=${encodeURIComponent(url)}&output=webp`;
   };
 
   // Use corsproxy.io for POST requests (Auth)
@@ -306,7 +314,8 @@ export default function App() {
       let target = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}`;
       if (token) target += `&access_token=${token}`;
 
-      const res = await fetch(getProxyUrl(target));
+      // Use AllOrigins for JSON search results
+      const res = await fetch(getSearchProxyUrl(target));
 
       if (!res.ok) {
         const txt = await res.text();
@@ -338,14 +347,13 @@ export default function App() {
   };
 
   const selectSymbol = async (url) => {
-    // Show loading state immediately to prevent double clicks
-    setIsDownloading(true);
+    setIsDownloading(true); // Show loading overlay immediately
     try {
-      const res = await fetch(getProxyUrl(url));
+      // Use Weserv for reliable image downloading
+      const res = await fetch(getImageProxyUrl(url));
       const blob = await res.blob();
       const reader = new FileReader();
       reader.onloadend = () => {
-        // Automatically switch type to image when an image is selected
         setEditingTile(prev => ({
           ...prev,
           type: 'image',
@@ -428,19 +436,26 @@ export default function App() {
       onClick={() => !editMode && onClick(tile)}
       className={`relative group flex flex-col items-center justify-center aspect-square rounded-2xl shadow-sm border-b-4 active:border-b-0 active:translate-y-1 transition-all cursor-pointer select-none overflow-hidden ${tile.color} border-black/10 hover:brightness-95`}
     >
-      <div className="flex-1 flex items-center justify-center w-full p-1">
+      {/* LAYOUT FIX: 
+         - min-h-0 allows the image container to shrink if needed
+         - flex-1 lets it take available space 
+         - p-1 reduces padding to give image more room
+      */}
+      <div className="flex-1 min-h-0 w-full flex items-center justify-center p-1">
         {tile.type === 'image' ? (
-          <img src={tile.image} alt={tile.label} className="w-full h-full object-contain pointer-events-none" />
+          <img src={tile.image} alt={tile.label} className="max-w-full max-h-full object-contain pointer-events-none" />
         ) : (
           <span className="text-5xl md:text-6xl select-none">{tile.image}</span>
         )}
       </div>
+
       {showLabels && (
-        <div className="w-full text-center py-2 px-1 bg-white/30 backdrop-blur-sm font-bold text-gray-800 text-sm md:text-base truncate flex items-center justify-center gap-1">
+        <div className="w-full shrink-0 text-center py-1 px-1 bg-white/30 backdrop-blur-sm font-bold text-gray-800 text-sm md:text-base truncate flex items-center justify-center gap-1">
           {tile.label}
           {tile.linkToPage && <ArrowRightCircle size={12} className="text-blue-600 opacity-70" />}
         </div>
       )}
+
       {editMode && (
         <div className="absolute inset-0 bg-black/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10">
           <button onClick={(e) => { e.stopPropagation(); setEditingTile(tile); }} className="p-3 bg-white rounded-full shadow-lg hover:bg-blue-50 text-blue-600 mr-2"><Edit2 size={20} /></button>
