@@ -23,28 +23,27 @@ import {
   ChevronDown,
   ChevronUp,
   WifiOff,
-  Check, // Added Check icon
-  AlertCircle // Added AlertCircle icon
+  Check, 
+  AlertCircle
 } from 'lucide-react';
 
 /**
  * Zip EasySpeak AAC
  * Developed by Zip Solutions
- * A single-file React application for Augmentative and Alternative Communication.
  */
 
 // --- Default Configuration Data ---
 const DEFAULT_CONFIG = {
   version: 1,
   settings: {
-    voiceURI: null, // Uses default if null
+    voiceURI: null,
     rate: 1.0,
     pitch: 1.0,
     volume: 1.0,
-    adminPin: "", // Empty means no password
-    openSymbolsToken: "", // API Token for OpenSymbols
-    gridSize: "auto", // "auto", 2, 3, 4, 6, 8
-    offlineOnly: false, // Prefer local voices
+    adminPin: "",
+    openSymbolsToken: "",
+    gridSize: "auto",
+    offlineOnly: false,
   },
   pages: [
     {
@@ -92,7 +91,6 @@ const DEFAULT_CONFIG = {
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 export default function App() {
-  // --- State ---
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [activePageId, setActivePageId] = useState(DEFAULT_CONFIG.pages[0].id);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -100,22 +98,20 @@ export default function App() {
   
   // UI State
   const [showSettings, setShowSettings] = useState(false);
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false); // Toggle for advanced options
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [editingTile, setEditingTile] = useState(null); 
   const [editingPage, setEditingPage] = useState(null);
   
   // Security State
   const [pinPrompt, setPinPrompt] = useState(false);
   const [pinInput, setPinInput] = useState("");
-  const [pinContext, setPinContext] = useState(null); // 'edit' or 'settings'
+  const [pinContext, setPinContext] = useState(null);
   
   // Search State
   const [showImageSearch, setShowImageSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
-  
-  // UI Confirmation State
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   // Refs
@@ -123,12 +119,10 @@ export default function App() {
 
   // --- Effects ---
   useEffect(() => {
-    // Load voices
     const loadVoices = () => {
       const voices = window.speechSynthesis.getVoices();
       setAvailableVoices(voices);
     };
-    
     loadVoices();
     if (window.speechSynthesis.onvoiceschanged !== undefined) {
       window.speechSynthesis.onvoiceschanged = loadVoices;
@@ -182,11 +176,7 @@ export default function App() {
   };
 
   const handleFactoryReset = () => {
-    // Use simple confirm or better, just do it since user is stuck
-    // For this environment, we'll try standard confirm, but if blocked, we might need a custom modal.
-    // Assuming standard confirm works for this one specific action or users are stuck.
-    // Ideally, replace this with UI state too, but let's stick to the main issue first.
-    if (window.confirm && window.confirm("WARNING: Factory Reset?")) {
+    if (window.confirm("WARNING: This will wipe all pages, buttons, settings, and REMOVE the PIN. This cannot be undone. Are you sure?")) {
       setConfig(DEFAULT_CONFIG);
       setPinPrompt(false);
       setPinInput("");
@@ -201,7 +191,6 @@ export default function App() {
       setPinContext(context);
       setPinPrompt(true);
     } else {
-      // No PIN set, grant access immediately
       if (context === 'edit') setIsEditMode(true);
       if (context === 'settings') setShowSettings(true);
     }
@@ -222,6 +211,13 @@ export default function App() {
   };
   
   // --- Search Functions ---
+  
+  // Helper to determine the correct proxy URL
+  const getProxyUrl = (targetUrl) => {
+    // Always use the internal Cloudflare Function proxy
+    return `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
+  };
+
   const searchSymbols = async () => {
     if (!searchQuery.trim()) return;
     setIsSearching(true);
@@ -233,16 +229,19 @@ export default function App() {
             envToken = import.meta.env.VITE_OPENSYMBOLS_TOKEN || "";
         }
     } catch (e) {
-        console.log("Env vars not available");
+        // Ignore in strict modes
     }
 
     const token = config.settings.openSymbolsToken || envToken;
 
     try {
-      let url = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}`;
-      if (token) url += `&access_token=${token}`;
+      let targetUrl = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}`;
+      if (token) targetUrl += `&access_token=${token}`;
 
-      const response = await fetch(url);
+      // Use the internal proxy
+      const finalUrl = getProxyUrl(targetUrl);
+
+      const response = await fetch(finalUrl);
       if (!response.ok) {
         if (response.status === 403 || response.status === 401) throw new Error("Access Token Required");
         throw new Error("API Error");
@@ -255,7 +254,7 @@ export default function App() {
       if (error.message.includes("Access Token")) {
           alert("Access Token required. Check Settings > Advanced.");
       } else {
-          alert("Could not fetch symbols. Check internet connection.");
+          alert("Could not fetch symbols. Check internet connection or CORS settings.");
       }
     } finally {
       setIsSearching(false);
@@ -265,8 +264,12 @@ export default function App() {
   const selectSymbol = async (imageUrl) => {
     setIsSearching(true);
     try {
-      const response = await fetch(imageUrl);
+      // Use the internal proxy for images too
+      const finalUrl = getProxyUrl(imageUrl);
+      
+      const response = await fetch(finalUrl);
       if (!response.ok) throw new Error("Network response was not ok");
+      
       const blob = await response.blob();
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -276,7 +279,7 @@ export default function App() {
       };
       reader.readAsDataURL(blob);
     } catch (error) {
-      // Fallback to URL
+      console.error("Offline save failed", error);
       setEditingTile(prev => ({ ...prev, type: 'image', image: imageUrl }));
       setShowImageSearch(false);
       setIsSearching(false);
@@ -316,8 +319,6 @@ export default function App() {
   };
 
   const deleteTile = (tileId) => {
-    // Replaced window.confirm with simple action for now as we don't have tile-delete-modal yet
-    // In a real app we'd add a modal, but for now we trust the Edit Mode context
     setConfig(prev => ({
       ...prev,
       pages: prev.pages.map(p => p.id === activePageId ? { ...p, tiles: p.tiles.filter(t => t.id !== tileId) } : p)
@@ -334,29 +335,18 @@ export default function App() {
   const updatePage = (updatedPage) => {
     setConfig(prev => ({ ...prev, pages: prev.pages.map(p => p.id === updatedPage.id ? updatedPage : p) }));
     setEditingPage(null);
-    setDeleteConfirm(false); // Reset confirm state
+    setDeleteConfirm(false); 
   };
 
   const deletePage = (pageId) => {
-    // 1. Validation (Double check, though UI should prevent this)
     if (config.pages.length <= 1) return;
-    
-    // 2. Filter out the deleted page
     const newPages = config.pages.filter(p => p.id !== pageId);
-    
-    // 3. Determine new active ID
-    // If the deleted page was active, we MUST switch tabs.
-    // If we deleted a non-active page, we keep the current activePageId unless it's gone (which is impossible here but good to be safe)
     let nextActiveId = activePageId;
     if (activePageId === pageId) {
         nextActiveId = newPages[0].id;
     }
-    
-    // 4. Update State
     setActivePageId(nextActiveId);
     setConfig(prev => ({ ...prev, pages: newPages }));
-    
-    // 5. Close Modal & Reset State
     setEditingPage(null);
     setDeleteConfirm(false);
   };
@@ -605,8 +595,6 @@ export default function App() {
                     </select>
                  </div>
               </div>
-              
-              {/* Delete Logic: 2-Step Confirmation */}
               <div className="flex gap-2 pt-2">
                  {deleteConfirm ? (
                    <div className="flex flex-1 gap-2">
@@ -794,7 +782,7 @@ export default function App() {
 
           </div>
           <div className="p-4 bg-slate-50 border-t text-center text-xs text-slate-400">
-            Zip EasySpeak v1.0 by <span className="font-bold">Zip Solutions</span>
+            Zip EasySpeak v1.0 by <span className="font-bold"><a href="https://zipsolutions.org">Zip Solutions</a></span>
           </div>
         </div>
       )}
