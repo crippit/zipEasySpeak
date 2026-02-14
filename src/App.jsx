@@ -247,16 +247,20 @@ export default function App() {
 
     let envToken = "";
     try { if (import.meta && import.meta.env) envToken = import.meta.env.VITE_OPENSYMBOLS_TOKEN || ""; } catch (e) { }
-    const token = config.settings.openSymbolsToken || envToken;
+    // TRIM the token to avoid issues with spaces from copy-paste
+    const token = (config.settings.openSymbolsToken || envToken).trim();
 
     try {
       let target = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}`;
       if (token) target += `&access_token=${token}`;
 
       const res = await fetch(getProxyUrl(target));
-      if (!res.ok) throw new Error("API Error");
-
       const data = await res.json();
+
+      if (!res.ok) {
+        // If AllOrigins returns an error, it might be the upstream API 
+        throw new Error(data.detail || data.error || "API Error");
+      }
 
       // Safety Check: Ensure data is an array before setting it
       if (Array.isArray(data)) {
@@ -265,12 +269,13 @@ export default function App() {
         console.error("API returned non-array:", data);
         setSearchResults([]);
         if (data && (data.error || data.detail)) {
+          // Provide detailed error feedback
           alert(`Search Error: ${data.error || data.detail}`);
         }
       }
     } catch (error) {
       console.error(error);
-      alert("Search failed. Check token or internet.");
+      alert(`Search failed: ${error.message}. Check token.`);
     } finally {
       setIsSearching(false);
     }
