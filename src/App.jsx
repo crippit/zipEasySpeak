@@ -44,11 +44,11 @@ const DEFAULT_CONFIG = {
     pitch: 1.0,
     volume: 1.0,
     adminPin: "",
-    openSymbolsSecret: "", // Changed to single Shared Secret
+    openSymbolsSecret: "", // Shared Secret (NOT the token)
     gridSize: "auto",
     offlineOnly: false,
-    enableSentenceBuilder: false, // Toggle for the new mode
-    speakOnSelect: false, // Default to FALSE: Don't speak while building
+    enableSentenceBuilder: false,
+    speakOnSelect: false,
   },
   pages: [
     {
@@ -93,7 +93,7 @@ export default function App() {
   const [sentence, setSentence] = useState([]); // Array of tile objects
 
   // --- Auth State ---
-  const [accessToken, setAccessToken] = useState(null); // Short-lived token
+  const [accessToken, setAccessToken] = useState(null); // The actual Access Token (not secret)
 
   // --- UI State ---
   const [showSettings, setShowSettings] = useState(false);
@@ -239,15 +239,14 @@ export default function App() {
 
   // --- Proxy & Search ---
   const getProxyUrl = (url) => {
-    // Use AllOrigins for everything (Live & Dev) for GET requests
+    // For GET requests (Images/Search), AllOrigins is a reliable FREE public proxy
     return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
   };
 
   // Function: Exchange Shared Secret for Access Token
   const fetchAuthToken = async () => {
-    // Get secret from Settings OR Env Vars
+    // 1. Get Secret
     let secret = config.settings.openSymbolsSecret;
-
     try {
       if (import.meta && import.meta.env) {
         if (!secret) secret = import.meta.env.VITE_OPENSYMBOLS_SECRET || "";
@@ -255,43 +254,36 @@ export default function App() {
     } catch (e) { }
 
     if (!secret) {
-      throw new Error("Missing Shared Secret");
+      throw new Error("Missing Shared Secret. Please add it in Settings.");
     }
 
     try {
-      const tokenUrl = "https://www.opensymbols.org/api/v2/token";
+      // Use our internal Cloudflare Function for the POST request
+      // This is free and secure on Cloudflare Pages
+      const res = await fetch('/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret: secret.trim() })
+      });
 
-      // Attempt 1: Direct POST using Form Data (Better for CORS than JSON)
-      try {
-        const formData = new URLSearchParams();
-        formData.append('secret', secret.trim());
-
-        const res = await fetch(tokenUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: formData
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.access_token) return data.access_token;
-        }
-      } catch (corsErr) {
-        console.warn("Direct POST failed, trying fallback...", corsErr);
+      // Handle non-deployed (local dev) environment gracefully
+      if (res.status === 404) {
+        throw new Error("Auth Function not found. (If testing locally, this requires 'wrangler pages dev')");
       }
 
-      // Attempt 2: GET via AllOrigins Proxy (Fallback)
-      // This constructs a GET request: /api/v2/token?secret=XYZ
-      const targetUrl = `${tokenUrl}?secret=${encodeURIComponent(secret.trim())}`;
-      const proxyRes = await fetch(getProxyUrl(targetUrl));
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Auth Failed: ${errText}`);
+      }
 
-      if (!proxyRes.ok) throw new Error("Auth Failed via Proxy");
-      const data = await proxyRes.json();
+      const data = await res.json();
 
-      if (data.access_token) return data.access_token;
-      throw new Error("No token returned in response");
+      if (data.access_token) {
+        console.log("Access Token received successfully.");
+        return data.access_token;
+      }
+
+      throw new Error("No 'access_token' returned.");
 
     } catch (e) {
       console.error("Token exchange failed", e);
@@ -308,23 +300,15 @@ export default function App() {
       // 1. Get Token (Memory -> Fetch)
       let token = accessToken;
 
-      // Only fetch if we don't have one
       if (!token) {
-        try {
-          token = await fetchAuthToken();
-          setAccessToken(token); // Save to state
-          console.log("Token obtained successfully");
-        } catch (e) {
-          console.log("No auth token obtained (" + e.message + ")");
-          throw new Error("Authentication failed. Check Shared Secret.");
-        }
+        token = await fetchAuthToken();
+        setAccessToken(token);
       }
 
-      // 2. Perform Search
-      let target = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}`;
-      if (token) target += `&access_token=${token}`;
+      // 2. Perform Search using the Token
+      const target = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}&access_token=${token}`;
 
-      // Use AllOrigins proxy for the GET request to avoid CORS on search
+      // Use AllOrigins for the GET request (Search Results)
       const res = await fetch(getProxyUrl(target));
 
       if (!res.ok) {
@@ -344,7 +328,8 @@ export default function App() {
       } else {
         setSearchResults([]);
         if (data && (data.error || data.detail)) {
-          alert(`Search Error: ${data.error || data.detail}`);
+          if (data.error === "invalid access token") setAccessToken(null);
+          throw new Error(data.error || data.detail);
         }
       }
     } catch (error) {
@@ -358,7 +343,7 @@ export default function App() {
   const selectSymbol = async (url) => {
     setIsSearching(true);
     try {
-      // Use AllOrigins proxy for image download too
+      // Use AllOrigins proxy for image download (GET)
       const res = await fetch(getProxyUrl(url));
       const blob = await res.blob();
       const reader = new FileReader();
