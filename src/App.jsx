@@ -28,7 +28,9 @@ import {
   Play,
   Delete,
   ArrowRightCircle,
-  Type
+  Type,
+  FilePlus,
+  Share
 } from 'lucide-react';
 
 /**
@@ -117,6 +119,7 @@ export default function App() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   const fileInputRef = useRef(null);
+  const mergeInputRef = useRef(null); // Ref for merge import
 
   // --- Effects ---
   useEffect(() => {
@@ -175,14 +178,28 @@ export default function App() {
   const removeLastWord = () => setSentence(prev => prev.slice(0, -1));
 
   // --- Import/Export ---
-  const handleExport = () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config));
+  const downloadJSON = (data, filename) => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data));
     const a = document.createElement('a');
     a.href = dataStr;
-    a.download = "zip_easyspeak_config.json";
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
+  };
+
+  const handleExport = () => {
+    downloadJSON(config, "zip_easyspeak_backup.json");
+  };
+
+  const handleExportPage = (page) => {
+    // Wrap page in a compatible config structure so it can be re-imported
+    const singlePageConfig = {
+      version: 1,
+      settings: config.settings, // Include current settings preference
+      pages: [page]
+    };
+    downloadJSON(singlePageConfig, `page_${page.label.replace(/\s+/g, '_').toLowerCase()}.json`);
   };
 
   const handleImport = (e) => {
@@ -194,9 +211,37 @@ export default function App() {
         if (imported.pages && Array.isArray(imported.pages)) {
           setConfig(imported);
           setActivePageId(imported.pages[0].id);
-          alert("Loaded!");
+          alert("Full backup restored!");
         } else {
           alert("Invalid config file structure.");
+        }
+      } catch (err) { alert("Error parsing file."); }
+    };
+  };
+
+  const handleMergeImport = (e) => {
+    const fileReader = new FileReader();
+    fileReader.readAsText(e.target.files[0], "UTF-8");
+    fileReader.onload = evt => {
+      try {
+        const imported = JSON.parse(evt.target.result);
+        if (imported.pages && Array.isArray(imported.pages)) {
+          // Check for duplicate IDs and regenerate if necessary (basic collision avoidance)
+          const newPages = imported.pages.map(p => {
+            // Simple check if ID exists, if so, new ID
+            if (config.pages.some(existing => existing.id === p.id)) {
+              return { ...p, id: generateId(), label: `${p.label} (Imported)` };
+            }
+            return p;
+          });
+
+          setConfig(prev => ({
+            ...prev,
+            pages: [...prev.pages, ...newPages]
+          }));
+          alert(`Success! Added ${newPages.length} page(s) to your board.`);
+        } else {
+          alert("Invalid file. No pages found.");
         }
       } catch (err) { alert("Error parsing file."); }
     };
@@ -236,15 +281,12 @@ export default function App() {
   };
 
   // --- Proxy & Search ---
-
-  // 1. Text Search Proxy (AllOrigins - good for JSON)
-  const getSearchProxyUrl = (url) => {
+  const getProxyUrl = (url) => {
     return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
   };
 
-  // 2. Image Download Proxy (Weserv.nl - fast, reliable, handles images specifically)
+  // High-performance image proxy (resizes and handles CORS)
   const getImageProxyUrl = (url) => {
-    // weserv takes the url directly
     return `https://images.weserv.nl/?url=${encodeURIComponent(url)}&output=webp`;
   };
 
@@ -314,8 +356,7 @@ export default function App() {
       let target = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}`;
       if (token) target += `&access_token=${token}`;
 
-      // Use AllOrigins for JSON search results
-      const res = await fetch(getSearchProxyUrl(target));
+      const res = await fetch(getProxyUrl(target));
 
       if (!res.ok) {
         const txt = await res.text();
@@ -347,9 +388,8 @@ export default function App() {
   };
 
   const selectSymbol = async (url) => {
-    setIsDownloading(true); // Show loading overlay immediately
+    setIsDownloading(true);
     try {
-      // Use Weserv for reliable image downloading
       const res = await fetch(getImageProxyUrl(url));
       const blob = await res.blob();
       const reader = new FileReader();
@@ -365,7 +405,6 @@ export default function App() {
       };
       reader.readAsDataURL(blob);
     } catch (e) {
-      // Fallback
       setEditingTile(prev => ({
         ...prev,
         type: 'image',
@@ -436,11 +475,6 @@ export default function App() {
       onClick={() => !editMode && onClick(tile)}
       className={`relative group flex flex-col items-center justify-center aspect-square rounded-2xl shadow-sm border-b-4 active:border-b-0 active:translate-y-1 transition-all cursor-pointer select-none overflow-hidden ${tile.color} border-black/10 hover:brightness-95`}
     >
-      {/* LAYOUT FIX: 
-         - min-h-0 allows the image container to shrink if needed
-         - flex-1 lets it take available space 
-         - p-1 reduces padding to give image more room
-      */}
       <div className="flex-1 min-h-0 w-full flex items-center justify-center p-1">
         {tile.type === 'image' ? (
           <img src={tile.image} alt={tile.label} className="max-w-full max-h-full object-contain pointer-events-none" />
@@ -692,6 +726,16 @@ export default function App() {
                   </select>
                 </div>
               </div>
+
+              <div className="flex justify-between items-center border-t pt-4">
+                <button
+                  onClick={() => handleExportPage(editingPage)}
+                  className="text-blue-600 font-bold text-sm flex items-center gap-1 hover:underline"
+                >
+                  <Share size={16} /> Export Page
+                </button>
+              </div>
+
               <div className="flex gap-2 pt-2">
                 {deleteConfirm ? (
                   <div className="flex flex-1 gap-2">
@@ -736,7 +780,31 @@ export default function App() {
           </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-8">
 
-            {/* Visuals */}
+            {/* Mode Settings */}
+            <section>
+              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><MessageSquare size={16} /> Interaction Mode</h3>
+              <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-sm">Sentence Builder</div>
+                    <p className="text-xs text-slate-500">Accumulate words in a strip before speaking</p>
+                  </div>
+                  <input type="checkbox" checked={config.settings.enableSentenceBuilder} onChange={e => updateSetting('enableSentenceBuilder', e.target.checked)} className="w-5 h-5 accent-blue-600" />
+                </div>
+                {config.settings.enableSentenceBuilder && (
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                    <div>
+                      <div className="font-bold text-sm">Speak on Select</div>
+                      <p className="text-xs text-slate-500">Speak each word as it is added</p>
+                    </div>
+                    <input type="checkbox" checked={config.settings.speakOnSelect} onChange={e => updateSetting('speakOnSelect', e.target.checked)} className="w-5 h-5 accent-blue-600" />
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <hr className="border-slate-100" />
+
             <section>
               <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><LayoutGrid size={16} /> Visuals</h3>
               <div className="space-y-4">
@@ -758,31 +826,6 @@ export default function App() {
                   </div>
                   <input type="checkbox" checked={config.settings.showLabels !== false} onChange={e => updateSetting('showLabels', e.target.checked)} className="w-5 h-5 accent-blue-600" />
                 </div>
-              </div>
-            </section>
-
-            <hr className="border-slate-100" />
-
-            {/* Mode Settings */}
-            <section>
-              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><MessageSquare size={16} /> Interaction Mode</h3>
-              <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-bold text-sm">Sentence Builder</div>
-                    <p className="text-xs text-slate-500">Accumulate words in a strip before speaking</p>
-                  </div>
-                  <input type="checkbox" checked={config.settings.enableSentenceBuilder} onChange={e => updateSetting('enableSentenceBuilder', e.target.checked)} className="w-5 h-5 accent-blue-600" />
-                </div>
-                {config.settings.enableSentenceBuilder && (
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-200">
-                    <div>
-                      <div className="font-bold text-sm">Speak on Select</div>
-                      <p className="text-xs text-slate-500">Speak each word as it is added</p>
-                    </div>
-                    <input type="checkbox" checked={config.settings.speakOnSelect} onChange={e => updateSetting('speakOnSelect', e.target.checked)} className="w-5 h-5 accent-blue-600" />
-                  </div>
-                )}
               </div>
             </section>
 
@@ -849,11 +892,27 @@ export default function App() {
               <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><Save size={16} /> Data & Storage</h3>
               <div className="grid grid-cols-2 gap-3">
                 <button onClick={handleExport} className="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-slate-50 transition-colors">
-                  <Download size={24} className="mb-2 text-blue-600" /> <span className="text-sm font-medium">Backup</span>
+                  <Download size={24} className="mb-2 text-blue-600" /> <span className="text-sm font-medium">Backup Full</span>
+                  <span className="text-xs text-slate-400">Save everything</span>
                 </button>
+                <button onClick={() => handleExportPage(activePage)} className="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-slate-50 transition-colors">
+                  <Share size={24} className="mb-2 text-indigo-600" /> <span className="text-sm font-medium">Export Page</span>
+                  <span className="text-xs text-slate-400">Save current page</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mt-3">
                 <label className="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
                   <Upload size={24} className="mb-2 text-green-600" /> <span className="text-sm font-medium">Restore</span>
+                  <span className="text-xs text-slate-400">Replace all</span>
                   <input type="file" ref={fileInputRef} onChange={handleImport} accept=".json" className="hidden" />
+                </label>
+
+                <label className="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+                  <FilePlus size={24} className="mb-2 text-purple-600" />
+                  <span className="text-sm font-medium">Import Page</span>
+                  <span className="text-xs text-slate-400">Add to board</span>
+                  <input type="file" ref={mergeInputRef} onChange={handleMergeImport} accept=".json" className="hidden" />
                 </label>
               </div>
             </section>
