@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Settings, 
-  Lock, 
-  Unlock, 
-  Plus, 
-  Trash2, 
-  Edit2, 
-  Volume2, 
-  Save, 
-  Upload, 
-  Download, 
+import {
+  Settings,
+  Lock,
+  Unlock,
+  Plus,
+  Trash2,
+  Edit2,
+  Volume2,
+  Save,
+  Upload,
+  Download,
   MoreHorizontal,
   X,
   Image as ImageIcon,
@@ -23,8 +23,11 @@ import {
   ChevronDown,
   ChevronUp,
   WifiOff,
-  Check, 
-  AlertCircle
+  Check,
+  AlertCircle,
+  Play,
+  Delete,
+  ArrowRightCircle // Icon for linked pages
 } from 'lucide-react';
 
 /**
@@ -44,6 +47,8 @@ const DEFAULT_CONFIG = {
     openSymbolsToken: "",
     gridSize: "auto",
     offlineOnly: false,
+    enableSentenceBuilder: false, // Toggle for the new mode
+    speakOnSelect: false, // Default to FALSE: Don't speak while building
   },
   pages: [
     {
@@ -52,12 +57,12 @@ const DEFAULT_CONFIG = {
       icon: "🏠",
       color: "bg-blue-100",
       tiles: [
-        { id: "t1", label: "Yes", phrase: "Yes", image: "👍", type: "emoji", color: "bg-green-200" },
-        { id: "t2", label: "No", phrase: "No", image: "👎", type: "emoji", color: "bg-red-200" },
-        { id: "t3", label: "Help", phrase: "I need help please", image: "🆘", type: "emoji", color: "bg-yellow-200" },
-        { id: "t4", label: "Stop", phrase: "Stop it", image: "🛑", type: "emoji", color: "bg-red-300" },
-        { id: "t5", label: "Want", phrase: "I want", image: "🤲", type: "emoji", color: "bg-blue-200" },
-        { id: "t6", label: "More", phrase: "I want more", image: "➕", type: "emoji", color: "bg-green-100" },
+        { id: "t1", label: "I", phrase: "I", image: "🧍", type: "emoji", color: "bg-yellow-200", linkToPage: "" },
+        { id: "t2", label: "Want", phrase: "want", image: "🤲", type: "emoji", color: "bg-green-200", linkToPage: "" },
+        { id: "t3", label: "Stop", phrase: "Stop it", image: "🛑", type: "emoji", color: "bg-red-300", linkToPage: "" },
+        { id: "t4", label: "More", phrase: "more", image: "➕", type: "emoji", color: "bg-blue-200", linkToPage: "" },
+        { id: "t5", label: "Yes", phrase: "Yes", image: "👍", type: "emoji", color: "bg-white", linkToPage: "" },
+        { id: "t6", label: "No", phrase: "No", image: "👎", type: "emoji", color: "bg-white", linkToPage: "" },
       ]
     },
     {
@@ -66,47 +71,38 @@ const DEFAULT_CONFIG = {
       icon: "🍔",
       color: "bg-orange-50",
       tiles: [
-        { id: "f1", label: "Hungry", phrase: "I am hungry", image: "😋", type: "emoji", color: "bg-orange-200" },
-        { id: "f2", label: "Water", phrase: "Can I have some water?", image: "💧", type: "emoji", color: "bg-blue-100" },
-        { id: "f3", label: "Apple", phrase: "I want an apple", image: "🍎", type: "emoji", color: "bg-red-100" },
-        { id: "f4", label: "Snack", phrase: "I want a snack", image: "🍪", type: "emoji", color: "bg-amber-200" },
-      ]
-    },
-    {
-      id: "p_feel",
-      label: "Feelings",
-      icon: "😊",
-      color: "bg-purple-50",
-      tiles: [
-        { id: "e1", label: "Happy", phrase: "I feel happy", image: "😄", type: "emoji", color: "bg-yellow-100" },
-        { id: "e2", label: "Sad", phrase: "I feel sad", image: "😢", type: "emoji", color: "bg-blue-100" },
-        { id: "e3", label: "Tired", phrase: "I am tired", image: "😴", type: "emoji", color: "bg-slate-200" },
-        { id: "e4", label: "Mad", phrase: "I am mad", image: "😠", type: "emoji", color: "bg-red-200" },
+        { id: "f1", label: "Apple", phrase: "apple", image: "🍎", type: "emoji", color: "bg-red-100", linkToPage: "" },
+        { id: "f2", label: "Banana", phrase: "banana", image: "🍌", type: "emoji", color: "bg-yellow-100", linkToPage: "" },
+        { id: "f3", label: "Water", phrase: "water", image: "💧", type: "emoji", color: "bg-blue-100", linkToPage: "" },
+        { id: "f4", label: "Cookie", phrase: "cookie", image: "🍪", type: "emoji", color: "bg-amber-200", linkToPage: "" },
       ]
     }
   ]
 };
 
-// --- Helper Functions ---
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 export default function App() {
+  // --- Main State ---
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [activePageId, setActivePageId] = useState(DEFAULT_CONFIG.pages[0].id);
   const [isEditMode, setIsEditMode] = useState(false);
   const [availableVoices, setAvailableVoices] = useState([]);
-  
-  // UI State
+
+  // --- Sentence Builder State ---
+  const [sentence, setSentence] = useState([]); // Array of tile objects
+
+  // --- UI State ---
   const [showSettings, setShowSettings] = useState(false);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
-  const [editingTile, setEditingTile] = useState(null); 
+  const [editingTile, setEditingTile] = useState(null);
   const [editingPage, setEditingPage] = useState(null);
-  
+
   // Security State
   const [pinPrompt, setPinPrompt] = useState(false);
   const [pinInput, setPinInput] = useState("");
   const [pinContext, setPinContext] = useState(null);
-  
+
   // Search State
   const [showImageSearch, setShowImageSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -114,7 +110,6 @@ export default function App() {
   const [isSearching, setIsSearching] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
-  // Refs
   const fileInputRef = useRef(null);
 
   // --- Effects ---
@@ -146,32 +141,61 @@ export default function App() {
     window.speechSynthesis.speak(utterance);
   };
 
-  const handleExport = () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config));
-    const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", "zip_easyspeak_config.json");
-    document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click();
-    downloadAnchorNode.remove();
+  const handleTileClick = (tile) => {
+    // 1. Speak Logic (Direct Mode vs Builder Mode)
+    if (config.settings.enableSentenceBuilder) {
+      // Add to sentence strip
+      setSentence(prev => [...prev, tile]);
+      // Optional: Speak individual word while building
+      if (config.settings.speakOnSelect) {
+        speak(tile.phrase);
+      }
+    } else {
+      // Direct Mode: Just speak
+      speak(tile.phrase);
+    }
+
+    // 2. Navigation Logic (Linked Pages)
+    if (tile.linkToPage && tile.linkToPage !== "") {
+      const targetPage = config.pages.find(p => p.id === tile.linkToPage);
+      if (targetPage) {
+        setActivePageId(targetPage.id);
+      }
+    }
   };
 
-  const handleImport = (event) => {
+  const playSentence = () => {
+    if (sentence.length === 0) return;
+    const fullText = sentence.map(t => t.phrase).join(" ");
+    speak(fullText);
+  };
+
+  const clearSentence = () => setSentence([]);
+  const removeLastWord = () => setSentence(prev => prev.slice(0, -1));
+
+  // --- Import/Export ---
+  const handleExport = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config));
+    const a = document.createElement('a');
+    a.href = dataStr;
+    a.download = "zip_easyspeak_config.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const handleImport = (e) => {
     const fileReader = new FileReader();
-    fileReader.readAsText(event.target.files[0], "UTF-8");
-    fileReader.onload = e => {
+    fileReader.readAsText(e.target.files[0], "UTF-8");
+    fileReader.onload = evt => {
       try {
-        const importedConfig = JSON.parse(e.target.result);
-        if (importedConfig.pages && importedConfig.settings) {
-          setConfig(importedConfig);
-          setActivePageId(importedConfig.pages[0].id);
-          alert("Configuration loaded successfully!");
-        } else {
-          alert("Invalid file format.");
+        const imported = JSON.parse(evt.target.result);
+        if (imported.pages) {
+          setConfig(imported);
+          setActivePageId(imported.pages[0].id);
+          alert("Loaded!");
         }
-      } catch (err) {
-        alert("Error parsing file.");
-      }
+      } catch (err) { alert("Error parsing file."); }
     };
   };
 
@@ -200,7 +224,7 @@ export default function App() {
     if (pinInput === config.settings.adminPin) {
       setPinPrompt(false);
       setPinInput("");
-      
+
       if (pinContext === 'edit') setIsEditMode(true);
       if (pinContext === 'settings') setShowSettings(true);
       setPinContext(null);
@@ -209,12 +233,16 @@ export default function App() {
       setPinInput("");
     }
   };
-  
+
   // --- Search Functions ---
-  
+
   // Helper to determine the correct proxy URL
   const getProxyUrl = (targetUrl) => {
-    // Always use the internal Cloudflare Function proxy
+    // Check if localhost
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+    }
+    // Production (Cloudflare Function)
     return `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
   };
 
@@ -222,14 +250,14 @@ export default function App() {
     if (!searchQuery.trim()) return;
     setIsSearching(true);
     setSearchResults([]);
-    
+
     let envToken = "";
     try {
-        if (import.meta && import.meta.env) {
-            envToken = import.meta.env.VITE_OPENSYMBOLS_TOKEN || "";
-        }
+      if (import.meta && import.meta.env) {
+        envToken = import.meta.env.VITE_OPENSYMBOLS_TOKEN || "";
+      }
     } catch (e) {
-        // Ignore in strict modes
+      // Ignore in strict modes
     }
 
     const token = config.settings.openSymbolsToken || envToken;
@@ -252,9 +280,9 @@ export default function App() {
     } catch (error) {
       console.error("Search failed", error);
       if (error.message.includes("Access Token")) {
-          alert("Access Token required. Check Settings > Advanced.");
+        alert("Access Token required. Check Settings > Advanced.");
       } else {
-          alert("Could not fetch symbols. Check internet connection or CORS settings.");
+        alert("Could not fetch symbols. Check internet connection or CORS settings.");
       }
     } finally {
       setIsSearching(false);
@@ -266,10 +294,10 @@ export default function App() {
     try {
       // Use the internal proxy for images too
       const finalUrl = getProxyUrl(imageUrl);
-      
+
       const response = await fetch(finalUrl);
       if (!response.ok) throw new Error("Network response was not ok");
-      
+
       const blob = await response.blob();
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -286,23 +314,19 @@ export default function App() {
     }
   };
 
-  // --- CRUD Operations ---
+  // --- CRUD State Updates ---
+  const updateSetting = (key, val) => setConfig(prev => ({ ...prev, settings: { ...prev.settings, [key]: val } }));
 
-  const updateSetting = (key, value) => {
-    setConfig(prev => ({
-      ...prev,
-      settings: { ...prev.settings, [key]: value }
-    }));
-  };
-
+  // CRUD Helpers
   const addTile = () => {
     const newTile = {
       id: generateId(),
-      label: "New Button",
-      phrase: "New Button",
+      label: "New",
+      phrase: "New",
       image: "⬜",
       type: "emoji",
-      color: "bg-white"
+      color: "bg-white",
+      linkToPage: ""
     };
     setConfig(prev => ({
       ...prev,
@@ -335,7 +359,7 @@ export default function App() {
   const updatePage = (updatedPage) => {
     setConfig(prev => ({ ...prev, pages: prev.pages.map(p => p.id === updatedPage.id ? updatedPage : p) }));
     setEditingPage(null);
-    setDeleteConfirm(false); 
+    setDeleteConfirm(false);
   };
 
   const deletePage = (pageId) => {
@@ -343,7 +367,7 @@ export default function App() {
     const newPages = config.pages.filter(p => p.id !== pageId);
     let nextActiveId = activePageId;
     if (activePageId === pageId) {
-        nextActiveId = newPages[0].id;
+      nextActiveId = newPages[0].id;
     }
     setActivePageId(nextActiveId);
     setConfig(prev => ({ ...prev, pages: newPages }));
@@ -354,14 +378,9 @@ export default function App() {
   // --- Sub-Components (Inline) ---
 
   const Tile = ({ tile, onClick, editMode }) => (
-    <div 
-      onClick={() => !editMode && onClick(tile.phrase)}
-      className={`
-        relative group flex flex-col items-center justify-center 
-        aspect-square rounded-2xl shadow-sm border-b-4 active:border-b-0 active:translate-y-1 transition-all
-        cursor-pointer select-none overflow-hidden
-        ${tile.color} border-black/10 hover:brightness-95
-      `}
+    <div
+      onClick={() => !editMode && onClick(tile)}
+      className={`relative group flex flex-col items-center justify-center aspect-square rounded-2xl shadow-sm border-b-4 active:border-b-0 active:translate-y-1 transition-all cursor-pointer select-none overflow-hidden ${tile.color} border-black/10 hover:brightness-95`}
     >
       <div className="flex-1 flex items-center justify-center w-full p-2">
         {tile.type === 'image' ? (
@@ -370,8 +389,10 @@ export default function App() {
           <span className="text-5xl md:text-6xl select-none">{tile.image}</span>
         )}
       </div>
-      <div className="w-full text-center py-2 px-1 bg-white/30 backdrop-blur-sm font-bold text-gray-800 text-sm md:text-base truncate">
+      <div className="w-full text-center py-2 px-1 bg-white/30 backdrop-blur-sm font-bold text-gray-800 text-sm md:text-base truncate flex items-center justify-center gap-1">
         {tile.label}
+        {/* Link Indicator */}
+        {tile.linkToPage && <ArrowRightCircle size={12} className="text-blue-600 opacity-70" />}
       </div>
       {editMode && (
         <div className="absolute inset-0 bg-black/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10">
@@ -402,14 +423,13 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800 flex flex-col md:flex-row overflow-hidden">
-      
+
       {/* --- Sidebar (Navigation) --- */}
       <nav className="w-full md:w-24 md:h-screen bg-white shadow-xl flex md:flex-col overflow-x-auto md:overflow-y-auto md:overflow-x-hidden shrink-0 z-20">
         <div className="hidden md:flex flex-col items-center justify-center py-4 border-b border-slate-100 mb-2">
-           <img src="/pwa-192x192.png" alt="Logo" className="w-10 h-10 rounded-xl shadow-sm mb-1 object-cover" onError={(e) => { e.target.style.display='none'; }} />
-           <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Zip</span>
+          <img src="/pwa-192x192.png" alt="Logo" className="w-10 h-10 rounded-xl shadow-sm mb-1 object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+          <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Zip</span>
         </div>
-
         <div className="p-2 md:p-4 flex md:flex-col items-center gap-2">
           {config.pages.map(page => (
             <button
@@ -421,25 +441,23 @@ export default function App() {
               <span className="text-[10px] font-bold truncate max-w-full leading-tight">{page.label}</span>
             </button>
           ))}
-          
           {isEditMode && (
-             <button onClick={addPage} className="flex flex-col items-center justify-center p-2 rounded-xl w-20 h-20 md:w-16 md:h-16 shrink-0 bg-green-100 text-green-700 hover:bg-green-200 border-2 border-dashed border-green-300">
-               <Plus size={24} />
-               <span className="text-[10px] font-bold mt-1">Add Page</span>
-             </button>
+            <button onClick={addPage} className="flex flex-col items-center justify-center p-2 rounded-xl w-20 h-20 md:w-16 md:h-16 shrink-0 bg-green-100 text-green-700 hover:bg-green-200 border-2 border-dashed border-green-300">
+              <Plus size={24} />
+              <span className="text-[10px] font-bold mt-1">Add Page</span>
+            </button>
           )}
         </div>
-        
         <div className="md:mt-auto p-2 md:p-4 border-t border-slate-100 flex md:flex-col items-center justify-center gap-3">
-           <button 
+          <button
             onClick={() => isEditMode ? setIsEditMode(false) : requestAccess('edit')}
             className={`p-3 rounded-full ${isEditMode ? 'bg-amber-100 text-amber-600' : 'text-slate-400 hover:bg-slate-100'}`}
             title={isEditMode ? "Exit Edit Mode" : "Enter Edit Mode"}
           >
             {isEditMode ? <Unlock size={20} /> : <Lock size={20} />}
           </button>
-          
-          <button 
+
+          <button
             onClick={() => requestAccess('settings')}
             className="p-3 rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600"
             title="Settings"
@@ -449,31 +467,61 @@ export default function App() {
         </div>
       </nav>
 
-      {/* --- Main Content --- */}
       <main className={`flex-1 h-[calc(100vh-80px)] md:h-screen overflow-y-auto p-4 md:p-8 transition-colors ${activePage.color}`}>
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-             <img src="/pwa-192x192.png" alt="Logo" className="md:hidden w-8 h-8 rounded-lg shadow-sm object-cover" onError={(e) => { e.target.style.display='none'; }} />
-             <h1 className="text-3xl font-bold flex items-center gap-2">{activePage.icon} {activePage.label}</h1>
-             {isEditMode && (
-               <button onClick={() => setEditingPage(activePage)} className="p-2 bg-white/50 hover:bg-white rounded-full text-slate-500"><Edit2 size={16} /></button>
-             )}
-          </div>
-          <div className="hidden md:flex items-center gap-2 bg-white/60 px-4 py-2 rounded-full">
-            <Volume2 size={18} className="text-slate-500"/>
-            <span className="text-sm font-medium text-slate-600">Voice: {config.settings.voiceURI ? 'Custom' : 'Default'}</span>
+
+        {/* --- Top Bar: Header or Sentence Strip --- */}
+        <div className="mb-6 space-y-4">
+
+          {/* Sentence Strip (Visible if Enabled) */}
+          {config.settings.enableSentenceBuilder && (
+            <div className="bg-white rounded-2xl shadow-lg p-2 min-h-[80px] flex items-center gap-2 border-2 border-blue-100 mb-4">
+              <div className="flex-1 flex gap-2 overflow-x-auto p-2">
+                {sentence.length === 0 ? (
+                  <span className="text-slate-300 italic pl-2 self-center">Build a sentence...</span>
+                ) : (
+                  sentence.map((t, idx) => (
+                    <div key={idx} className="flex flex-col items-center justify-center bg-slate-100 border border-slate-200 rounded-lg p-2 min-w-[60px] h-[60px]">
+                      <span className="text-xl leading-none mb-1">{t.type === 'emoji' ? t.image : '🖼️'}</span>
+                      <span className="text-[10px] font-bold truncate max-w-[60px]">{t.label}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="flex gap-1 border-l pl-2 border-slate-100">
+                <button onClick={removeLastWord} className="p-3 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-xl" title="Backspace"><Delete size={24} /></button>
+                <button onClick={playSentence} className="p-3 bg-blue-600 text-white rounded-xl shadow-md hover:bg-blue-700 hover:scale-105 transition-all" title="Play"><Play size={24} fill="currentColor" /></button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <img src="/pwa-192x192.png" alt="Logo" className="md:hidden w-8 h-8 rounded-lg shadow-sm object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+              <h1 className="text-3xl font-bold flex items-center gap-2">{activePage.icon} {activePage.label}</h1>
+              {isEditMode && (
+                <button onClick={() => setEditingPage(activePage)} className="p-2 bg-white/50 hover:bg-white rounded-full text-slate-500"><Edit2 size={16} /></button>
+              )}
+            </div>
+
+            <div className="hidden md:flex items-center gap-2 bg-white/60 px-4 py-2 rounded-full">
+              <Volume2 size={18} className="text-slate-500" />
+              <span className="text-sm font-medium text-slate-600">Voice: {config.settings.voiceURI ? 'Custom' : 'Default'}</span>
+              {config.settings.enableSentenceBuilder && (
+                <span className="ml-2 pl-2 border-l border-slate-300 text-xs text-blue-600 font-bold uppercase">Builder Mode</span>
+              )}
+            </div>
           </div>
         </div>
 
         <div className={`grid ${getGridClass()} gap-4 md:gap-6 pb-20`}>
           {activePage.tiles.map(tile => (
-            <Tile key={tile.id} tile={tile} onClick={speak} editMode={isEditMode} />
+            <Tile key={tile.id} tile={tile} onClick={handleTileClick} editMode={isEditMode} />
           ))}
           {isEditMode && (
-             <button onClick={addTile} className="aspect-square rounded-2xl border-4 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:border-slate-400 hover:text-slate-500 hover:bg-slate-50 transition-all">
-               <Plus size={48} />
-               <span className="font-bold mt-2">Add Button</span>
-             </button>
+            <button onClick={addTile} className="aspect-square rounded-2xl border-4 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:border-slate-400 hover:text-slate-500 hover:bg-slate-50 transition-all">
+              <Plus size={48} />
+              <span className="font-bold mt-2">Add Button</span>
+            </button>
           )}
         </div>
       </main>
@@ -482,145 +530,162 @@ export default function App() {
 
       {editingTile && !showImageSearch && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
             <div className="p-4 border-b flex justify-between items-center bg-slate-50">
               <h3 className="font-bold text-lg">Edit Button</h3>
-              <button onClick={() => setEditingTile(null)}><X size={20}/></button>
+              <button onClick={() => setEditingTile(null)}><X size={20} /></button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto">
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Label (Seen)</label>
-                <input type="text" value={editingTile.label} onChange={e => setEditingTile({...editingTile, label: e.target.value})} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                <input type="text" value={editingTile.label} onChange={e => setEditingTile({ ...editingTile, label: e.target.value })} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Phrase (Spoken)</label>
-                <textarea value={editingTile.phrase} onChange={e => setEditingTile({...editingTile, phrase: e.target.value})} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" rows={2} />
+                <textarea value={editingTile.phrase} onChange={e => setEditingTile({ ...editingTile, phrase: e.target.value })} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" rows={2} />
               </div>
-              
+
               <div className="grid grid-cols-2 gap-4">
-                 <div>
-                    <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Type</label>
-                    <select value={editingTile.type} onChange={e => setEditingTile({...editingTile, type: e.target.value})} className="w-full p-3 border rounded-lg bg-white">
-                      <option value="emoji">Emoji</option>
-                      <option value="image">Image URL</option>
-                    </select>
-                 </div>
-                 <div>
-                    <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Background</label>
-                    <select value={editingTile.color} onChange={e => setEditingTile({...editingTile, color: e.target.value})} className="w-full p-3 border rounded-lg bg-white">
-                      <option value="bg-white">White</option>
-                      <option value="bg-red-200">Red</option>
-                      <option value="bg-blue-200">Blue</option>
-                      <option value="bg-green-200">Green</option>
-                      <option value="bg-yellow-200">Yellow</option>
-                      <option value="bg-orange-200">Orange</option>
-                      <option value="bg-purple-200">Purple</option>
-                      <option value="bg-pink-200">Pink</option>
-                    </select>
-                 </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Type</label>
+                  <select value={editingTile.type} onChange={e => setEditingTile({ ...editingTile, type: e.target.value })} className="w-full p-3 border rounded-lg bg-white">
+                    <option value="emoji">Emoji</option>
+                    <option value="image">Image URL</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Background</label>
+                  <select value={editingTile.color} onChange={e => setEditingTile({ ...editingTile, color: e.target.value })} className="w-full p-3 border rounded-lg bg-white">
+                    <option value="bg-white">White</option>
+                    <option value="bg-red-200">Red</option>
+                    <option value="bg-blue-200">Blue</option>
+                    <option value="bg-green-200">Green</option>
+                    <option value="bg-yellow-200">Yellow</option>
+                    <option value="bg-orange-200">Orange</option>
+                    <option value="bg-purple-200">Purple</option>
+                    <option value="bg-pink-200">Pink</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Page Linking Feature */}
+              <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                <label className="block text-xs font-bold uppercase text-blue-600 mb-1 flex items-center gap-1"><ArrowRightCircle size={12} /> Link to Page (Optional)</label>
+                <select
+                  value={editingTile.linkToPage || ""}
+                  onChange={e => setEditingTile({ ...editingTile, linkToPage: e.target.value })}
+                  className="w-full p-2 border rounded-md text-sm bg-white"
+                >
+                  <option value="">-- No Link (Stay here) --</option>
+                  {config.pages.map(p => (
+                    <option key={p.id} value={p.id}>{p.icon} {p.label}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-blue-400 mt-1">If set, clicking this button will jump to that page.</p>
               </div>
 
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-500 mb-1">{editingTile.type === 'emoji' ? 'Emoji' : 'Image URL'}</label>
                 <div className="flex gap-2">
-                  <input type="text" value={editingTile.image} onChange={e => setEditingTile({...editingTile, image: e.target.value})} className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder={editingTile.type === 'emoji' ? 'Paste emoji here' : 'https://...'} />
+                  <input type="text" value={editingTile.image} onChange={e => setEditingTile({ ...editingTile, image: e.target.value })} className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder={editingTile.type === 'emoji' ? 'Paste emoji here' : 'https://...'} />
                   <button onClick={() => { setSearchQuery(editingTile.label || ""); setShowImageSearch(true); }} className="p-3 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors" title="Search for Symbol"><Search size={20} /></button>
                 </div>
               </div>
+
               <button onClick={() => updateTile(editingTile)} className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors mt-2">Save Changes</button>
             </div>
           </div>
         </div>
       )}
-      
+
       {showImageSearch && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[80vh] flex flex-col">
-             <div className="p-4 border-b flex justify-between items-center bg-slate-50">
-               <h3 className="font-bold text-lg flex items-center gap-2"><Search size={20} className="text-blue-600"/> Search Symbols</h3>
-               <button onClick={() => setShowImageSearch(false)}><X size={20}/></button>
-             </div>
-             <div className="p-4 border-b bg-white">
-                <div className="flex gap-2">
-                  <input type="text" autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchSymbols()} placeholder="Search for a symbol (e.g. 'cat', 'eat')" className="flex-1 p-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
-                  <button onClick={searchSymbols} disabled={isSearching} className="px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 disabled:opacity-50">{isSearching ? <Loader2 className="animate-spin"/> : "Search"}</button>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[80vh] flex flex-col">
+            <div className="p-4 border-b flex justify-between items-center bg-slate-50">
+              <h3 className="font-bold text-lg flex items-center gap-2"><Search size={20} className="text-blue-600" /> Search Symbols</h3>
+              <button onClick={() => setShowImageSearch(false)}><X size={20} /></button>
+            </div>
+            <div className="p-4 border-b bg-white">
+              <div className="flex gap-2">
+                <input type="text" autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchSymbols()} placeholder="Search for a symbol (e.g. 'cat', 'eat')" className="flex-1 p-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
+                <button onClick={searchSymbols} disabled={isSearching} className="px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 disabled:opacity-50">{isSearching ? <Loader2 className="animate-spin" /> : "Search"}</button>
+              </div>
+              <div className="text-xs text-slate-400 mt-2 text-center">Powered by OpenSymbols • Images will be saved offline</div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 bg-slate-50">
+              {isSearching && searchResults.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-slate-400"><Loader2 size={40} className="animate-spin mb-2" /></div>
+              ) : searchResults.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-4">
+                  {searchResults.map((result) => (
+                    <button key={result.id || result.image_url} onClick={() => selectSymbol(result.image_url)} className="aspect-square bg-white rounded-xl shadow-sm border hover:border-blue-500 hover:ring-2 hover:ring-blue-200 p-2 flex flex-col items-center justify-center transition-all group">
+                      <img src={result.image_url} alt={result.name} className="w-full h-full object-contain group-hover:scale-110 transition-transform" loading="lazy" referrerPolicy="no-referrer" />
+                      <span className="text-[10px] text-slate-400 mt-1 truncate w-full text-center">{result.name}</span>
+                    </button>
+                  ))}
                 </div>
-                <div className="text-xs text-slate-400 mt-2 text-center">Powered by OpenSymbols • Images will be saved offline</div>
-             </div>
-             <div className="flex-1 overflow-y-auto p-4 bg-slate-50">
-               {isSearching && searchResults.length === 0 ? (
-                 <div className="flex h-full items-center justify-center text-slate-400"><Loader2 size={40} className="animate-spin mb-2" /></div>
-               ) : searchResults.length > 0 ? (
-                 <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-4">
-                   {searchResults.map((result) => (
-                     <button key={result.id || result.image_url} onClick={() => selectSymbol(result.image_url)} className="aspect-square bg-white rounded-xl shadow-sm border hover:border-blue-500 hover:ring-2 hover:ring-blue-200 p-2 flex flex-col items-center justify-center transition-all group">
-                       <img src={result.image_url} alt={result.name} className="w-full h-full object-contain group-hover:scale-110 transition-transform" loading="lazy" referrerPolicy="no-referrer" />
-                       <span className="text-[10px] text-slate-400 mt-1 truncate w-full text-center">{result.name}</span>
-                     </button>
-                   ))}
-                 </div>
-               ) : (
-                 <div className="flex flex-col items-center justify-center h-full text-slate-400"><ImageIcon size={48} className="mb-2 opacity-20"/><p>No symbols found yet.</p><p className="text-sm">Try typing a word above.</p></div>
-               )}
-             </div>
-           </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-slate-400"><ImageIcon size={48} className="mb-2 opacity-20" /><p>No symbols found yet.</p><p className="text-sm">Try typing a word above.</p></div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
       {editingPage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
-             <div className="p-4 border-b flex justify-between items-center bg-slate-50">
+            <div className="p-4 border-b flex justify-between items-center bg-slate-50">
               <h3 className="font-bold text-lg">Edit Page</h3>
-              <button onClick={() => { setEditingPage(null); setDeleteConfirm(false); }}><X size={20}/></button>
+              <button onClick={() => { setEditingPage(null); setDeleteConfirm(false); }}><X size={20} /></button>
             </div>
             <div className="p-6 space-y-4">
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Page Name</label>
-                <input type="text" value={editingPage.label} onChange={e => setEditingPage({...editingPage, label: e.target.value})} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                <input type="text" value={editingPage.label} onChange={e => setEditingPage({ ...editingPage, label: e.target.value })} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                 <div>
-                    <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Icon</label>
-                    <input type="text" value={editingPage.icon} onChange={e => setEditingPage({...editingPage, icon: e.target.value})} className="w-full p-3 border rounded-lg text-center" />
-                 </div>
-                 <div>
-                    <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Theme</label>
-                    <select value={editingPage.color} onChange={e => setEditingPage({...editingPage, color: e.target.value})} className="w-full p-3 border rounded-lg bg-white">
-                      <option value="bg-slate-100">Gray</option>
-                      <option value="bg-blue-50">Blue</option>
-                      <option value="bg-green-50">Green</option>
-                      <option value="bg-purple-50">Purple</option>
-                      <option value="bg-orange-50">Orange</option>
-                    </select>
-                 </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Icon</label>
+                  <input type="text" value={editingPage.icon} onChange={e => setEditingPage({ ...editingPage, icon: e.target.value })} className="w-full p-3 border rounded-lg text-center" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Theme</label>
+                  <select value={editingPage.color} onChange={e => setEditingPage({ ...editingPage, color: e.target.value })} className="w-full p-3 border rounded-lg bg-white">
+                    <option value="bg-slate-100">Gray</option>
+                    <option value="bg-blue-50">Blue</option>
+                    <option value="bg-green-50">Green</option>
+                    <option value="bg-purple-50">Purple</option>
+                    <option value="bg-orange-50">Orange</option>
+                  </select>
+                </div>
               </div>
               <div className="flex gap-2 pt-2">
-                 {deleteConfirm ? (
-                   <div className="flex flex-1 gap-2">
-                     <button onClick={() => deletePage(editingPage.id)} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-colors animate-in fade-in zoom-in duration-200">Confirm</button>
-                     <button onClick={() => setDeleteConfirm(false)} className="px-4 py-3 bg-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-300 transition-colors">Cancel</button>
-                   </div>
-                 ) : (
-                   <button 
-                     onClick={() => setDeleteConfirm(true)} 
-                     disabled={config.pages.length <= 1}
-                     className="flex-1 py-3 bg-red-100 text-red-600 font-bold rounded-xl hover:bg-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                   >
-                     <Trash2 size={18}/> Delete
-                   </button>
-                 )}
-                 
-                 {!deleteConfirm && (
-                   <button onClick={() => updatePage(editingPage)} className="flex-[2] py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-2">
-                     <Check size={18}/> Save
-                   </button>
-                 )}
+                {deleteConfirm ? (
+                  <div className="flex flex-1 gap-2">
+                    <button onClick={() => deletePage(editingPage.id)} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-colors animate-in fade-in zoom-in duration-200">Confirm</button>
+                    <button onClick={() => setDeleteConfirm(false)} className="px-4 py-3 bg-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-300 transition-colors">Cancel</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setDeleteConfirm(true)}
+                    disabled={config.pages.length <= 1}
+                    className="flex-1 py-3 bg-red-100 text-red-600 font-bold rounded-xl hover:bg-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <Trash2 size={18} /> Delete
+                  </button>
+                )}
+
+                {!deleteConfirm && (
+                  <button onClick={() => updatePage(editingPage)} className="flex-[2] py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-2">
+                    <Check size={18} /> Save
+                  </button>
+                )}
               </div>
-              
+
               {config.pages.length <= 1 && (
                 <p className="text-xs text-center text-slate-400 flex items-center justify-center gap-1">
-                  <AlertCircle size={12}/> Cannot delete the last page
+                  <AlertCircle size={12} /> Cannot delete the last page
                 </p>
               )}
             </div>
@@ -630,19 +695,19 @@ export default function App() {
 
       {pinPrompt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6 text-center">
-             <Lock className="mx-auto text-blue-600 mb-4" size={40} />
-             <h3 className="font-bold text-lg mb-2">Enter Admin PIN</h3>
-             <p className="text-xs text-gray-500 mb-4">
-               {pinContext === 'settings' ? 'Enter PIN to access Settings' : 'Enter PIN to unlock Edit Mode'}
-             </p>
-             <input type="password" autoFocus value={pinInput} onChange={e => setPinInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && verifyPin()} className="w-full text-center text-2xl tracking-widest p-3 border rounded-lg mb-4" placeholder="****" />
-             <div className="flex gap-2 mb-4">
-               <button onClick={() => { setPinPrompt(false); setPinContext(null); setPinInput(""); }} className="flex-1 py-2 rounded-lg bg-gray-200">Cancel</button>
-               <button onClick={verifyPin} className="flex-1 py-2 rounded-lg bg-blue-600 text-white font-bold">Unlock</button>
-             </div>
-             <button onClick={handleFactoryReset} className="text-red-500 text-xs hover:underline">Forgot PIN? Factory Reset</button>
-           </div>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6 text-center">
+            <Lock className="mx-auto text-blue-600 mb-4" size={40} />
+            <h3 className="font-bold text-lg mb-2">Enter Admin PIN</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              {pinContext === 'settings' ? 'Enter PIN to access Settings' : 'Enter PIN to unlock Edit Mode'}
+            </p>
+            <input type="password" autoFocus value={pinInput} onChange={e => setPinInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && verifyPin()} className="w-full text-center text-2xl tracking-widest p-3 border rounded-lg mb-4" placeholder="****" />
+            <div className="flex gap-2 mb-4">
+              <button onClick={() => { setPinPrompt(false); setPinContext(null); setPinInput(""); }} className="flex-1 py-2 rounded-lg bg-gray-200">Cancel</button>
+              <button onClick={verifyPin} className="flex-1 py-2 rounded-lg bg-blue-600 text-white font-bold">Unlock</button>
+            </div>
+            <button onClick={handleFactoryReset} className="text-red-500 text-xs hover:underline">Forgot PIN? Factory Reset</button>
+          </div>
         </div>
       )}
 
@@ -650,15 +715,39 @@ export default function App() {
       {showSettings && (
         <div className="fixed inset-y-0 right-0 z-40 w-full md:w-96 bg-white shadow-2xl flex flex-col transform transition-transform duration-300">
           <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
-            <h2 className="text-xl font-bold flex items-center gap-2"><Settings size={20}/> Settings</h2>
-            <button onClick={() => setShowSettings(false)} className="hover:text-gray-300"><X size={24}/></button>
+            <h2 className="text-xl font-bold flex items-center gap-2"><Settings size={20} /> Settings</h2>
+            <button onClick={() => setShowSettings(false)} className="hover:text-gray-300"><X size={24} /></button>
           </div>
-          
           <div className="flex-1 overflow-y-auto p-6 space-y-8">
-            
+
+            {/* Mode Settings */}
+            <section>
+              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><MessageSquare size={16} /> Interaction Mode</h3>
+              <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-sm">Sentence Builder</div>
+                    <p className="text-xs text-slate-500">Accumulate words in a strip before speaking</p>
+                  </div>
+                  <input type="checkbox" checked={config.settings.enableSentenceBuilder} onChange={e => updateSetting('enableSentenceBuilder', e.target.checked)} className="w-5 h-5 accent-blue-600" />
+                </div>
+                {config.settings.enableSentenceBuilder && (
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                    <div>
+                      <div className="font-bold text-sm">Speak on Select</div>
+                      <p className="text-xs text-slate-500">Speak each word as it is added</p>
+                    </div>
+                    <input type="checkbox" checked={config.settings.speakOnSelect} onChange={e => updateSetting('speakOnSelect', e.target.checked)} className="w-5 h-5 accent-blue-600" />
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <hr className="border-slate-100" />
+
             {/* Visuals */}
             <section>
-              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><LayoutGrid size={16}/> Visuals</h3>
+              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><LayoutGrid size={16} /> Visuals</h3>
               <div>
                 <label className="block text-sm font-medium mb-1">Grid Size</label>
                 <select value={config.settings.gridSize || "auto"} onChange={e => updateSetting('gridSize', e.target.value === "auto" ? "auto" : parseInt(e.target.value))} className="w-full p-2 border rounded-md text-sm">
@@ -676,8 +765,8 @@ export default function App() {
 
             {/* Voice Settings */}
             <section>
-              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><Volume2 size={16}/> Speech</h3>
-              
+              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><Volume2 size={16} /> Speech</h3>
+
               {/* Added Offline Toggle */}
               <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 mb-4 flex items-center justify-between">
                 <div>
@@ -721,50 +810,48 @@ export default function App() {
 
             <hr className="border-slate-100" />
 
-            {/* Security */}
             <section>
-               <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><Lock size={16}/> Security</h3>
-               <div className="bg-slate-50 p-4 rounded-lg">
-                 <label className="block text-sm font-medium mb-1">Admin PIN</label>
-                 <input type="text" value={config.settings.adminPin} onChange={e => updateSetting('adminPin', e.target.value)} placeholder="Leave empty for no PIN" className="w-full p-2 border rounded-md text-sm mb-2" />
-                 <p className="text-xs text-slate-500">Locks Edit Mode AND Settings menu.</p>
-               </div>
-            </section>
-
-            <hr className="border-slate-100" />
-            
-             {/* Advanced / API Keys */}
-            <section>
-               <button 
-                 onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                 className="flex items-center justify-between w-full text-sm font-bold uppercase text-slate-400 mb-3 hover:text-slate-600"
-               >
-                 <span className="flex items-center gap-2"><Key size={16}/> Advanced Settings</span>
-                 {showAdvancedSettings ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
-               </button>
-               
-               {showAdvancedSettings && (
-                 <div className="bg-slate-50 p-4 rounded-lg animate-in fade-in slide-in-from-top-2 duration-200">
-                   <label className="block text-sm font-medium mb-1">OpenSymbols Access Token</label>
-                   <input 
-                      type="text" 
-                      value={config.settings.openSymbolsToken}
-                      onChange={e => updateSetting('openSymbolsToken', e.target.value)}
-                      placeholder="Optional Access Token"
-                      className="w-full p-2 border rounded-md text-sm mb-2"
-                   />
-                   <p className="text-xs text-slate-500">
-                     Required for symbol search API.
-                   </p>
-                 </div>
-               )}
+              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><Lock size={16} /> Security</h3>
+              <div className="bg-slate-50 p-4 rounded-lg">
+                <label className="block text-sm font-medium mb-1">Admin PIN</label>
+                <input type="text" value={config.settings.adminPin} onChange={e => updateSetting('adminPin', e.target.value)} placeholder="Leave empty for no PIN" className="w-full p-2 border rounded-md text-sm mb-2" />
+                <p className="text-xs text-slate-500">Locks Edit Mode AND Settings menu.</p>
+              </div>
             </section>
 
             <hr className="border-slate-100" />
 
-            {/* Data Management */}
+            {/* Advanced / API Keys */}
             <section>
-              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><Save size={16}/> Data & Storage</h3>
+              <button
+                onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                className="flex items-center justify-between w-full text-sm font-bold uppercase text-slate-400 mb-3 hover:text-slate-600"
+              >
+                <span className="flex items-center gap-2"><Key size={16} /> Advanced Settings</span>
+                {showAdvancedSettings ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+
+              {showAdvancedSettings && (
+                <div className="bg-slate-50 p-4 rounded-lg animate-in fade-in slide-in-from-top-2 duration-200">
+                  <label className="block text-sm font-medium mb-1">OpenSymbols Access Token</label>
+                  <input
+                    type="text"
+                    value={config.settings.openSymbolsToken}
+                    onChange={e => updateSetting('openSymbolsToken', e.target.value)}
+                    placeholder="Optional Access Token"
+                    className="w-full p-2 border rounded-md text-sm mb-2"
+                  />
+                  <p className="text-xs text-slate-500">
+                    Required for symbol search API.
+                  </p>
+                </div>
+              )}
+            </section>
+
+            <hr className="border-slate-100" />
+
+            <section>
+              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><Save size={16} /> Data & Storage</h3>
               <div className="grid grid-cols-2 gap-3">
                 <button onClick={handleExport} className="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-slate-50 transition-colors">
                   <Download size={24} className="mb-2 text-blue-600" />
@@ -786,7 +873,6 @@ export default function App() {
           </div>
         </div>
       )}
-
     </div>
   );
 }
