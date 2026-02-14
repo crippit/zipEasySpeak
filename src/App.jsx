@@ -27,7 +27,8 @@ import {
   AlertCircle,
   Play,
   Delete,
-  ArrowRightCircle // Icon for linked pages
+  ArrowRightCircle,
+  Type
 } from 'lucide-react';
 
 /**
@@ -49,6 +50,7 @@ const DEFAULT_CONFIG = {
     offlineOnly: false,
     enableSentenceBuilder: false,
     speakOnSelect: false,
+    showLabels: true, // Default to showing labels
   },
   pages: [
     {
@@ -111,6 +113,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false); // New state for visual feedback during download
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   const fileInputRef = useRef(null);
@@ -145,20 +148,15 @@ export default function App() {
   };
 
   const handleTileClick = (tile) => {
-    // 1. Speak Logic (Direct Mode vs Builder Mode)
     if (config.settings.enableSentenceBuilder) {
-      // Add to sentence strip
       setSentence(prev => [...prev, tile]);
-      // Optional: Speak individual word while building
       if (config.settings.speakOnSelect) {
         speak(tile.phrase);
       }
     } else {
-      // Direct Mode: Just speak
       speak(tile.phrase);
     }
 
-    // 2. Navigation Logic (Linked Pages)
     if (tile.linkToPage && tile.linkToPage !== "") {
       const targetPage = config.pages.find(p => p.id === tile.linkToPage);
       if (targetPage) {
@@ -239,13 +237,14 @@ export default function App() {
 
   // --- Proxy & Search ---
   const getProxyUrl = (url) => {
-    // For GET requests (Images/Search), AllOrigins is a reliable FREE public proxy
     return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
   };
 
+  // Use corsproxy.io for POST requests (Auth)
+  const getPostProxyUrl = (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`;
+
   // Function: Exchange Shared Secret for Access Token
   const fetchAuthToken = async () => {
-    // 1. Get Secret
     let secret = config.settings.openSymbolsSecret;
     try {
       if (import.meta && import.meta.env) {
@@ -258,32 +257,28 @@ export default function App() {
     }
 
     try {
-      // Use our internal Cloudflare Function for the POST request
-      // This is free and secure on Cloudflare Pages
-      const res = await fetch('/api/token', {
+      const tokenUrl = "https://www.opensymbols.org/api/v2/token";
+      const formData = new URLSearchParams();
+      formData.append('secret', secret.trim());
+
+      const proxyRes = await fetch(getPostProxyUrl(tokenUrl), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secret: secret.trim() })
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: formData
       });
 
-      // Handle non-deployed (local dev) environment gracefully
-      if (res.status === 404) {
-        throw new Error("Auth Function not found. (If testing locally, this requires 'wrangler pages dev')");
-      }
+      if (!proxyRes.ok) throw new Error(`Auth Failed: ${proxyRes.status}`);
 
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Auth Failed: ${errText}`);
-      }
-
-      const data = await res.json();
+      const data = await proxyRes.json();
 
       if (data.access_token) {
         console.log("Access Token received successfully.");
         return data.access_token;
       }
 
-      throw new Error("No 'access_token' returned.");
+      throw new Error("No 'access_token' in response. Check Secret.");
 
     } catch (e) {
       console.error("Token exchange failed", e);
@@ -297,18 +292,20 @@ export default function App() {
     setSearchResults([]);
 
     try {
-      // 1. Get Token (Memory -> Fetch)
       let token = accessToken;
 
       if (!token) {
-        token = await fetchAuthToken();
-        setAccessToken(token);
+        try {
+          token = await fetchAuthToken();
+          setAccessToken(token);
+        } catch (e) {
+          console.log("Token fetch failed, trying without...", e);
+        }
       }
 
-      // 2. Perform Search using the Token
-      const target = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}&access_token=${token}`;
+      let target = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}`;
+      if (token) target += `&access_token=${token}`;
 
-      // Use AllOrigins for the GET request (Search Results)
       const res = await fetch(getProxyUrl(target));
 
       if (!res.ok) {
@@ -341,21 +338,33 @@ export default function App() {
   };
 
   const selectSymbol = async (url) => {
-    setIsSearching(true);
+    // Show loading state immediately to prevent double clicks
+    setIsDownloading(true);
     try {
-      // Use AllOrigins proxy for image download (GET)
       const res = await fetch(getProxyUrl(url));
       const blob = await res.blob();
       const reader = new FileReader();
       reader.onloadend = () => {
-        setEditingTile(prev => ({ ...prev, type: 'image', image: reader.result }));
+        // Automatically switch type to image when an image is selected
+        setEditingTile(prev => ({
+          ...prev,
+          type: 'image',
+          image: reader.result
+        }));
         setShowImageSearch(false);
+        setIsDownloading(false);
         setIsSearching(false);
       };
       reader.readAsDataURL(blob);
     } catch (e) {
-      setEditingTile(prev => ({ ...prev, type: 'image', image: url }));
+      // Fallback
+      setEditingTile(prev => ({
+        ...prev,
+        type: 'image',
+        image: url
+      }));
       setShowImageSearch(false);
+      setIsDownloading(false);
       setIsSearching(false);
     }
   };
@@ -400,6 +409,7 @@ export default function App() {
   // --- Render Helpers ---
   const activePage = config.pages.find(p => p.id === activePageId) || config.pages[0];
   const displayedVoices = config.settings.offlineOnly ? availableVoices.filter(v => v.localService) : availableVoices;
+  const showLabels = config.settings.showLabels !== false; // Default true
 
   const getGridClass = () => {
     const s = config.settings.gridSize;
@@ -418,18 +428,19 @@ export default function App() {
       onClick={() => !editMode && onClick(tile)}
       className={`relative group flex flex-col items-center justify-center aspect-square rounded-2xl shadow-sm border-b-4 active:border-b-0 active:translate-y-1 transition-all cursor-pointer select-none overflow-hidden ${tile.color} border-black/10 hover:brightness-95`}
     >
-      <div className="flex-1 flex items-center justify-center w-full p-2">
+      <div className="flex-1 flex items-center justify-center w-full p-1">
         {tile.type === 'image' ? (
           <img src={tile.image} alt={tile.label} className="w-full h-full object-contain pointer-events-none" />
         ) : (
           <span className="text-5xl md:text-6xl select-none">{tile.image}</span>
         )}
       </div>
-      <div className="w-full text-center py-2 px-1 bg-white/30 backdrop-blur-sm font-bold text-gray-800 text-sm md:text-base truncate flex items-center justify-center gap-1">
-        {tile.label}
-        {/* Link Indicator */}
-        {tile.linkToPage && <ArrowRightCircle size={12} className="text-blue-600 opacity-70" />}
-      </div>
+      {showLabels && (
+        <div className="w-full text-center py-2 px-1 bg-white/30 backdrop-blur-sm font-bold text-gray-800 text-sm md:text-base truncate flex items-center justify-center gap-1">
+          {tile.label}
+          {tile.linkToPage && <ArrowRightCircle size={12} className="text-blue-600 opacity-70" />}
+        </div>
+      )}
       {editMode && (
         <div className="absolute inset-0 bg-black/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10">
           <button onClick={(e) => { e.stopPropagation(); setEditingTile(tile); }} className="p-3 bg-white rounded-full shadow-lg hover:bg-blue-50 text-blue-600 mr-2"><Edit2 size={20} /></button>
@@ -598,7 +609,17 @@ export default function App() {
       {/* Image Search Modal */}
       {showImageSearch && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[80vh] flex flex-col">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[80vh] flex flex-col relative overflow-hidden">
+
+            {/* Loading Overlay */}
+            {isDownloading && (
+              <div className="absolute inset-0 z-[70] bg-white/80 flex flex-col items-center justify-center">
+                <Loader2 size={64} className="animate-spin text-blue-600 mb-4" />
+                <h3 className="text-xl font-bold text-slate-700">Downloading Image...</h3>
+                <p className="text-sm text-slate-500">Please wait while we save it offline.</p>
+              </div>
+            )}
+
             <div className="p-4 border-b flex justify-between items-center bg-slate-50">
               <h3 className="font-bold text-lg flex items-center gap-2"><Search size={20} className="text-blue-600" /> Search Symbols</h3>
               <button onClick={() => setShowImageSearch(false)}><X size={20} /></button>
@@ -608,12 +629,13 @@ export default function App() {
                 <input type="text" autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchSymbols()} placeholder="Search..." className="flex-1 p-3 border rounded-xl" />
                 <button onClick={searchSymbols} disabled={isSearching} className="px-6 py-3 bg-blue-600 text-white font-bold rounded-xl disabled:opacity-50">{isSearching ? <Loader2 className="animate-spin" /> : "Search"}</button>
               </div>
+              <div className="text-xs text-slate-400 mt-2 text-center">Click an image to select it. Images are saved offline.</div>
             </div>
             <div className="flex-1 overflow-y-auto p-4 bg-slate-50">
               {Array.isArray(searchResults) && searchResults.length > 0 ? (
                 <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-4">
                   {searchResults.map((result) => (
-                    <button key={result.id || result.image_url} onClick={() => selectSymbol(result.image_url)} className="aspect-square bg-white rounded-xl shadow-sm border p-2 flex flex-col items-center justify-center hover:ring-2 hover:ring-blue-200">
+                    <button key={result.id || result.image_url} onClick={() => selectSymbol(result.image_url)} className="aspect-square bg-white rounded-xl shadow-sm border p-2 flex flex-col items-center justify-center hover:ring-2 hover:ring-blue-200 focus:ring-2 focus:ring-blue-400 outline-none">
                       <img src={result.image_url} alt="symbol" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                     </button>
                   ))}
@@ -699,6 +721,33 @@ export default function App() {
           </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-8">
 
+            {/* Visuals */}
+            <section>
+              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><LayoutGrid size={16} /> Visuals</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Grid Size</label>
+                  <select value={config.settings.gridSize || "auto"} onChange={e => updateSetting('gridSize', e.target.value === "auto" ? "auto" : parseInt(e.target.value))} className="w-full p-2 border rounded-md text-sm">
+                    <option value="auto">Auto (Responsive)</option>
+                    <option value={2}>2 Columns</option>
+                    <option value={3}>3 Columns</option>
+                    <option value={4}>4 Columns</option>
+                    <option value={6}>6 Columns</option>
+                    <option value={8}>8 Columns</option>
+                  </select>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-sm font-medium">Show Button Labels</label>
+                    <p className="text-xs text-slate-500">Hide text for a cleaner look</p>
+                  </div>
+                  <input type="checkbox" checked={config.settings.showLabels !== false} onChange={e => updateSetting('showLabels', e.target.checked)} className="w-5 h-5 accent-blue-600" />
+                </div>
+              </div>
+            </section>
+
+            <hr className="border-slate-100" />
+
             {/* Mode Settings */}
             <section>
               <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><MessageSquare size={16} /> Interaction Mode</h3>
@@ -719,23 +768,6 @@ export default function App() {
                     <input type="checkbox" checked={config.settings.speakOnSelect} onChange={e => updateSetting('speakOnSelect', e.target.checked)} className="w-5 h-5 accent-blue-600" />
                   </div>
                 )}
-              </div>
-            </section>
-
-            <hr className="border-slate-100" />
-
-            <section>
-              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><LayoutGrid size={16} /> Visuals</h3>
-              <div>
-                <label className="block text-sm font-medium mb-1">Grid Size</label>
-                <select value={config.settings.gridSize || "auto"} onChange={e => updateSetting('gridSize', e.target.value === "auto" ? "auto" : parseInt(e.target.value))} className="w-full p-2 border rounded-md text-sm">
-                  <option value="auto">Auto (Responsive)</option>
-                  <option value={2}>2 Columns</option>
-                  <option value={3}>3 Columns</option>
-                  <option value={4}>4 Columns</option>
-                  <option value={6}>6 Columns</option>
-                  <option value={8}>8 Columns</option>
-                </select>
               </div>
             </section>
 
