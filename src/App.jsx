@@ -30,7 +30,8 @@ import {
   ArrowRightCircle,
   Type,
   FilePlus,
-  Share
+  Share,
+  VolumeX // New icon for silent tiles
 } from 'lucide-react';
 
 /**
@@ -47,12 +48,12 @@ const DEFAULT_CONFIG = {
     pitch: 1.0,
     volume: 1.0,
     adminPin: "",
-    openSymbolsSecret: "", // Shared Secret (NOT the token)
+    openSymbolsSecret: "",
     gridSize: "auto",
     offlineOnly: false,
     enableSentenceBuilder: false,
     speakOnSelect: false,
-    showLabels: true, // Default to showing labels
+    showLabels: true,
   },
   pages: [
     {
@@ -61,12 +62,12 @@ const DEFAULT_CONFIG = {
       icon: "🏠",
       color: "bg-blue-100",
       tiles: [
-        { id: "t1", label: "I", phrase: "I", image: "🧍", type: "emoji", color: "bg-yellow-200", linkToPage: "" },
-        { id: "t2", label: "Want", phrase: "want", image: "🤲", type: "emoji", color: "bg-green-200", linkToPage: "" },
-        { id: "t3", label: "Stop", phrase: "Stop it", image: "🛑", type: "emoji", color: "bg-red-300", linkToPage: "" },
-        { id: "t4", label: "More", phrase: "more", image: "➕", type: "emoji", color: "bg-blue-200", linkToPage: "" },
-        { id: "t5", label: "Yes", phrase: "Yes", image: "👍", type: "emoji", color: "bg-white", linkToPage: "" },
-        { id: "t6", label: "No", phrase: "No", image: "👎", type: "emoji", color: "bg-white", linkToPage: "" },
+        { id: "t1", label: "I", phrase: "I", image: "🧍", type: "emoji", color: "bg-yellow-200", linkToPage: "", isSilent: false },
+        { id: "t2", label: "Want", phrase: "want", image: "🤲", type: "emoji", color: "bg-green-200", linkToPage: "", isSilent: false },
+        { id: "t3", label: "Stop", phrase: "Stop it", image: "🛑", type: "emoji", color: "bg-red-300", linkToPage: "", isSilent: false },
+        { id: "t4", label: "More", phrase: "more", image: "➕", type: "emoji", color: "bg-blue-200", linkToPage: "", isSilent: false },
+        { id: "t5", label: "Yes", phrase: "Yes", image: "👍", type: "emoji", color: "bg-white", linkToPage: "", isSilent: false },
+        { id: "t6", label: "No", phrase: "No", image: "👎", type: "emoji", color: "bg-white", linkToPage: "", isSilent: false },
       ]
     },
     {
@@ -75,10 +76,10 @@ const DEFAULT_CONFIG = {
       icon: "🍔",
       color: "bg-orange-50",
       tiles: [
-        { id: "f1", label: "Apple", phrase: "apple", image: "🍎", type: "emoji", color: "bg-red-100", linkToPage: "" },
-        { id: "f2", label: "Banana", phrase: "banana", image: "🍌", type: "emoji", color: "bg-yellow-100", linkToPage: "" },
-        { id: "f3", label: "Water", phrase: "water", image: "💧", type: "emoji", color: "bg-blue-100", linkToPage: "" },
-        { id: "f4", label: "Cookie", phrase: "cookie", image: "🍪", type: "emoji", color: "bg-amber-200", linkToPage: "" },
+        { id: "f1", label: "Apple", phrase: "apple", image: "🍎", type: "emoji", color: "bg-red-100", linkToPage: "", isSilent: false },
+        { id: "f2", label: "Banana", phrase: "banana", image: "🍌", type: "emoji", color: "bg-yellow-100", linkToPage: "", isSilent: false },
+        { id: "f3", label: "Water", phrase: "water", image: "💧", type: "emoji", color: "bg-blue-100", linkToPage: "", isSilent: false },
+        { id: "f4", label: "Cookie", phrase: "cookie", image: "🍪", type: "emoji", color: "bg-amber-200", linkToPage: "", isSilent: false },
       ]
     }
   ]
@@ -115,11 +116,11 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false); // New state for visual feedback during download
+  const [isDownloading, setIsDownloading] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   const fileInputRef = useRef(null);
-  const mergeInputRef = useRef(null); // Ref for merge import
+  const mergeInputRef = useRef(null);
 
   // --- Effects ---
   useEffect(() => {
@@ -151,15 +152,26 @@ export default function App() {
   };
 
   const handleTileClick = (tile) => {
-    if (config.settings.enableSentenceBuilder) {
-      setSentence(prev => [...prev, tile]);
-      if (config.settings.speakOnSelect) {
+    // Check if tile is silent (action only)
+    const isSilent = tile.isSilent === true;
+
+    // 1. Speak Logic (Direct Mode vs Builder Mode)
+    // Only process speech/sentence logic if NOT silent
+    if (!isSilent) {
+      if (config.settings.enableSentenceBuilder) {
+        // Add to sentence strip
+        setSentence(prev => [...prev, tile]);
+        // Optional: Speak individual word while building
+        if (config.settings.speakOnSelect) {
+          speak(tile.phrase);
+        }
+      } else {
+        // Direct Mode: Just speak
         speak(tile.phrase);
       }
-    } else {
-      speak(tile.phrase);
     }
 
+    // 2. Navigation Logic (Linked Pages) - Runs regardless of silent status
     if (tile.linkToPage && tile.linkToPage !== "") {
       const targetPage = config.pages.find(p => p.id === tile.linkToPage);
       if (targetPage) {
@@ -193,10 +205,9 @@ export default function App() {
   };
 
   const handleExportPage = (page) => {
-    // Wrap page in a compatible config structure so it can be re-imported
     const singlePageConfig = {
       version: 1,
-      settings: config.settings, // Include current settings preference
+      settings: config.settings,
       pages: [page]
     };
     downloadJSON(singlePageConfig, `page_${page.label.replace(/\s+/g, '_').toLowerCase()}.json`);
@@ -226,9 +237,7 @@ export default function App() {
       try {
         const imported = JSON.parse(evt.target.result);
         if (imported.pages && Array.isArray(imported.pages)) {
-          // Check for duplicate IDs and regenerate if necessary (basic collision avoidance)
           const newPages = imported.pages.map(p => {
-            // Simple check if ID exists, if so, new ID
             if (config.pages.some(existing => existing.id === p.id)) {
               return { ...p, id: generateId(), label: `${p.label} (Imported)` };
             }
@@ -285,15 +294,12 @@ export default function App() {
     return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
   };
 
-  // High-performance image proxy (resizes and handles CORS)
   const getImageProxyUrl = (url) => {
     return `https://images.weserv.nl/?url=${encodeURIComponent(url)}&output=webp`;
   };
 
-  // Use corsproxy.io for POST requests (Auth)
   const getPostProxyUrl = (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`;
 
-  // Function: Exchange Shared Secret for Access Token
   const fetchAuthToken = async () => {
     let secret = config.settings.openSymbolsSecret;
     try {
@@ -421,7 +427,7 @@ export default function App() {
 
   // CRUD Helpers
   const addTile = () => {
-    const newTile = { id: generateId(), label: "New", phrase: "New", image: "⬜", type: "emoji", color: "bg-white", linkToPage: "" };
+    const newTile = { id: generateId(), label: "New", phrase: "New", image: "⬜", type: "emoji", color: "bg-white", linkToPage: "", isSilent: false };
     setConfig(p => ({ ...p, pages: p.pages.map(pg => pg.id === activePageId ? { ...pg, tiles: [...pg.tiles, newTile] } : pg) }));
   };
   const updateTile = (t) => {
@@ -456,7 +462,7 @@ export default function App() {
   // --- Render Helpers ---
   const activePage = config.pages.find(p => p.id === activePageId) || config.pages[0];
   const displayedVoices = config.settings.offlineOnly ? availableVoices.filter(v => v.localService) : availableVoices;
-  const showLabels = config.settings.showLabels !== false; // Default true
+  const showLabels = config.settings.showLabels !== false;
 
   const getGridClass = () => {
     const s = config.settings.gridSize;
@@ -487,6 +493,7 @@ export default function App() {
         <div className="w-full shrink-0 text-center py-1 px-1 bg-white/30 backdrop-blur-sm font-bold text-gray-800 text-sm md:text-base truncate flex items-center justify-center gap-1">
           {tile.label}
           {tile.linkToPage && <ArrowRightCircle size={12} className="text-blue-600 opacity-70" />}
+          {tile.isSilent && editMode && <VolumeX size={12} className="text-red-500 opacity-70" />}
         </div>
       )}
 
@@ -626,20 +633,35 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Page Linking Feature */}
-              <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
-                <label className="block text-xs font-bold uppercase text-blue-600 mb-1 flex items-center gap-1"><ArrowRightCircle size={12} /> Link to Page (Optional)</label>
-                <select
-                  value={editingTile.linkToPage || ""}
-                  onChange={e => setEditingTile({ ...editingTile, linkToPage: e.target.value })}
-                  className="w-full p-2 border rounded-md text-sm bg-white"
-                >
-                  <option value="">-- No Link (Stay here) --</option>
-                  {config.pages.map(p => (
-                    <option key={p.id} value={p.id}>{p.icon} {p.label}</option>
-                  ))}
-                </select>
-                <p className="text-[10px] text-blue-400 mt-1">If set, clicking this button will jump to that page.</p>
+              {/* Page Linking & Action Tile Features */}
+              <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 space-y-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase text-blue-600 mb-1 flex items-center gap-1"><ArrowRightCircle size={12} /> Link to Page</label>
+                  <select
+                    value={editingTile.linkToPage || ""}
+                    onChange={e => setEditingTile({ ...editingTile, linkToPage: e.target.value })}
+                    className="w-full p-2 border rounded-md text-sm bg-white"
+                  >
+                    <option value="">-- No Link (Stay here) --</option>
+                    {config.pages.map(p => (
+                      <option key={p.id} value={p.id}>{p.icon} {p.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Silent Toggle */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-bold text-blue-800 flex items-center gap-1"><VolumeX size={14} /> Silent (Navigation Only)</label>
+                    <p className="text-[10px] text-blue-500">Don't speak or add to sentence</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={editingTile.isSilent === true}
+                    onChange={e => setEditingTile({ ...editingTile, isSilent: e.target.checked })}
+                    className="w-5 h-5 accent-blue-600"
+                  />
+                </div>
               </div>
 
               <div>
@@ -726,16 +748,6 @@ export default function App() {
                   </select>
                 </div>
               </div>
-
-              <div className="flex justify-between items-center border-t pt-4">
-                <button
-                  onClick={() => handleExportPage(editingPage)}
-                  className="text-blue-600 font-bold text-sm flex items-center gap-1 hover:underline"
-                >
-                  <Share size={16} /> Export Page
-                </button>
-              </div>
-
               <div className="flex gap-2 pt-2">
                 {deleteConfirm ? (
                   <div className="flex flex-1 gap-2">
