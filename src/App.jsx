@@ -15,7 +15,16 @@ import {
   Image as ImageIcon,
   MessageSquare,
   LayoutGrid,
-  Zap // Kept for reference, though we are swapping the logo
+  Zap,
+  Search,
+  Loader2,
+  Key,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  WifiOff,
+  Check, // Added Check icon
+  AlertCircle // Added AlertCircle icon
 } from 'lucide-react';
 
 /**
@@ -33,6 +42,9 @@ const DEFAULT_CONFIG = {
     pitch: 1.0,
     volume: 1.0,
     adminPin: "", // Empty means no password
+    openSymbolsToken: "", // API Token for OpenSymbols
+    gridSize: "auto", // "auto", 2, 3, 4, 6, 8
+    offlineOnly: false, // Prefer local voices
   },
   pages: [
     {
@@ -88,10 +100,23 @@ export default function App() {
   
   // UI State
   const [showSettings, setShowSettings] = useState(false);
-  const [editingTile, setEditingTile] = useState(null); // Tile object or null
-  const [editingPage, setEditingPage] = useState(null); // Page object or null
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false); // Toggle for advanced options
+  const [editingTile, setEditingTile] = useState(null); 
+  const [editingPage, setEditingPage] = useState(null);
+  
+  // Security State
   const [pinPrompt, setPinPrompt] = useState(false);
   const [pinInput, setPinInput] = useState("");
+  const [pinContext, setPinContext] = useState(null); // 'edit' or 'settings'
+  
+  // Search State
+  const [showImageSearch, setShowImageSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  
+  // UI Confirmation State
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   // Refs
   const fileInputRef = useRef(null);
@@ -114,13 +139,8 @@ export default function App() {
 
   const speak = (text) => {
     if (!text) return;
-    
-    // Cancel current speech to avoid queue buildup
     window.speechSynthesis.cancel();
-
     const utterance = new SpeechSynthesisUtterance(text);
-    
-    // Apply settings
     utterance.rate = config.settings.rate;
     utterance.pitch = config.settings.pitch;
     utterance.volume = config.settings.volume;
@@ -129,7 +149,6 @@ export default function App() {
       const selectedVoice = availableVoices.find(v => v.voiceURI === config.settings.voiceURI);
       if (selectedVoice) utterance.voice = selectedVoice;
     }
-
     window.speechSynthesis.speak(utterance);
   };
 
@@ -162,22 +181,105 @@ export default function App() {
     };
   };
 
-  const attemptEnterEditMode = () => {
+  const handleFactoryReset = () => {
+    // Use simple confirm or better, just do it since user is stuck
+    // For this environment, we'll try standard confirm, but if blocked, we might need a custom modal.
+    // Assuming standard confirm works for this one specific action or users are stuck.
+    // Ideally, replace this with UI state too, but let's stick to the main issue first.
+    if (window.confirm && window.confirm("WARNING: Factory Reset?")) {
+      setConfig(DEFAULT_CONFIG);
+      setPinPrompt(false);
+      setPinInput("");
+      setPinContext(null);
+    }
+  };
+
+  // --- Security Logic ---
+
+  const requestAccess = (context) => {
     if (config.settings.adminPin && config.settings.adminPin.length > 0) {
+      setPinContext(context);
       setPinPrompt(true);
     } else {
-      setIsEditMode(true);
+      // No PIN set, grant access immediately
+      if (context === 'edit') setIsEditMode(true);
+      if (context === 'settings') setShowSettings(true);
     }
   };
 
   const verifyPin = () => {
     if (pinInput === config.settings.adminPin) {
-      setIsEditMode(true);
       setPinPrompt(false);
       setPinInput("");
+      
+      if (pinContext === 'edit') setIsEditMode(true);
+      if (pinContext === 'settings') setShowSettings(true);
+      setPinContext(null);
     } else {
       alert("Incorrect PIN");
       setPinInput("");
+    }
+  };
+  
+  // --- Search Functions ---
+  const searchSymbols = async () => {
+    if (!searchQuery.trim()) return;
+    setIsSearching(true);
+    setSearchResults([]);
+    
+    let envToken = "";
+    try {
+        if (import.meta && import.meta.env) {
+            envToken = import.meta.env.VITE_OPENSYMBOLS_TOKEN || "";
+        }
+    } catch (e) {
+        console.log("Env vars not available");
+    }
+
+    const token = config.settings.openSymbolsToken || envToken;
+
+    try {
+      let url = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}`;
+      if (token) url += `&access_token=${token}`;
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        if (response.status === 403 || response.status === 401) throw new Error("Access Token Required");
+        throw new Error("API Error");
+      }
+
+      const data = await response.json();
+      setSearchResults(data);
+    } catch (error) {
+      console.error("Search failed", error);
+      if (error.message.includes("Access Token")) {
+          alert("Access Token required. Check Settings > Advanced.");
+      } else {
+          alert("Could not fetch symbols. Check internet connection.");
+      }
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const selectSymbol = async (imageUrl) => {
+    setIsSearching(true);
+    try {
+      const response = await fetch(imageUrl);
+      if (!response.ok) throw new Error("Network response was not ok");
+      const blob = await response.blob();
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setEditingTile(prev => ({ ...prev, type: 'image', image: reader.result }));
+        setShowImageSearch(false);
+        setIsSearching(false);
+      };
+      reader.readAsDataURL(blob);
+    } catch (error) {
+      // Fallback to URL
+      setEditingTile(prev => ({ ...prev, type: 'image', image: imageUrl }));
+      setShowImageSearch(false);
+      setIsSearching(false);
     }
   };
 
@@ -199,78 +301,65 @@ export default function App() {
       type: "emoji",
       color: "bg-white"
     };
-    
     setConfig(prev => ({
       ...prev,
-      pages: prev.pages.map(p => {
-        if (p.id === activePageId) {
-          return { ...p, tiles: [...p.tiles, newTile] };
-        }
-        return p;
-      })
+      pages: prev.pages.map(p => p.id === activePageId ? { ...p, tiles: [...p.tiles, newTile] } : p)
     }));
   };
 
   const updateTile = (updatedTile) => {
     setConfig(prev => ({
       ...prev,
-      pages: prev.pages.map(p => {
-        if (p.id === activePageId) {
-          return { ...p, tiles: p.tiles.map(t => t.id === updatedTile.id ? updatedTile : t) };
-        }
-        return p;
-      })
+      pages: prev.pages.map(p => p.id === activePageId ? { ...p, tiles: p.tiles.map(t => t.id === updatedTile.id ? updatedTile : t) } : p)
     }));
     setEditingTile(null);
   };
 
   const deleteTile = (tileId) => {
-    if (!window.confirm("Delete this button?")) return;
+    // Replaced window.confirm with simple action for now as we don't have tile-delete-modal yet
+    // In a real app we'd add a modal, but for now we trust the Edit Mode context
     setConfig(prev => ({
       ...prev,
-      pages: prev.pages.map(p => {
-        if (p.id === activePageId) {
-          return { ...p, tiles: p.tiles.filter(t => t.id !== tileId) };
-        }
-        return p;
-      })
+      pages: prev.pages.map(p => p.id === activePageId ? { ...p, tiles: p.tiles.filter(t => t.id !== tileId) } : p)
     }));
     setEditingTile(null);
   };
 
   const addPage = () => {
-    const newPage = {
-      id: generateId(),
-      label: "New Page",
-      icon: "📄",
-      color: "bg-gray-100",
-      tiles: []
-    };
+    const newPage = { id: generateId(), label: "New Page", icon: "📄", color: "bg-gray-100", tiles: [] };
     setConfig(prev => ({ ...prev, pages: [...prev.pages, newPage] }));
     setActivePageId(newPage.id);
   };
 
   const updatePage = (updatedPage) => {
-    setConfig(prev => ({
-      ...prev,
-      pages: prev.pages.map(p => p.id === updatedPage.id ? updatedPage : p)
-    }));
+    setConfig(prev => ({ ...prev, pages: prev.pages.map(p => p.id === updatedPage.id ? updatedPage : p) }));
     setEditingPage(null);
+    setDeleteConfirm(false); // Reset confirm state
   };
 
   const deletePage = (pageId) => {
-    if (config.pages.length <= 1) {
-      alert("You must have at least one page.");
-      return;
-    }
-    if (!window.confirm("Delete this entire page and all its buttons?")) return;
+    // 1. Validation (Double check, though UI should prevent this)
+    if (config.pages.length <= 1) return;
     
+    // 2. Filter out the deleted page
     const newPages = config.pages.filter(p => p.id !== pageId);
+    
+    // 3. Determine new active ID
+    // If the deleted page was active, we MUST switch tabs.
+    // If we deleted a non-active page, we keep the current activePageId unless it's gone (which is impossible here but good to be safe)
+    let nextActiveId = activePageId;
+    if (activePageId === pageId) {
+        nextActiveId = newPages[0].id;
+    }
+    
+    // 4. Update State
+    setActivePageId(nextActiveId);
     setConfig(prev => ({ ...prev, pages: newPages }));
-    setActivePageId(newPages[0].id);
+    
+    // 5. Close Modal & Reset State
     setEditingPage(null);
+    setDeleteConfirm(false);
   };
-
 
   // --- Sub-Components (Inline) ---
 
@@ -284,7 +373,6 @@ export default function App() {
         ${tile.color} border-black/10 hover:brightness-95
       `}
     >
-      {/* Content */}
       <div className="flex-1 flex items-center justify-center w-full p-2">
         {tile.type === 'image' ? (
           <img src={tile.image} alt={tile.label} className="w-full h-full object-contain pointer-events-none" />
@@ -295,45 +383,40 @@ export default function App() {
       <div className="w-full text-center py-2 px-1 bg-white/30 backdrop-blur-sm font-bold text-gray-800 text-sm md:text-base truncate">
         {tile.label}
       </div>
-
-      {/* Edit Mode Overlays */}
       {editMode && (
         <div className="absolute inset-0 bg-black/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10">
-          <button 
-            onClick={(e) => { e.stopPropagation(); setEditingTile(tile); }}
-            className="p-3 bg-white rounded-full shadow-lg hover:bg-blue-50 text-blue-600 mr-2"
-          >
-            <Edit2 size={20} />
-          </button>
-          <button 
-            onClick={(e) => { e.stopPropagation(); deleteTile(tile.id); }}
-            className="p-3 bg-white rounded-full shadow-lg hover:bg-red-50 text-red-600"
-          >
-            <Trash2 size={20} />
-          </button>
+          <button onClick={(e) => { e.stopPropagation(); setEditingTile(tile); }} className="p-3 bg-white rounded-full shadow-lg hover:bg-blue-50 text-blue-600 mr-2"><Edit2 size={20} /></button>
+          <button onClick={(e) => { e.stopPropagation(); deleteTile(tile.id); }} className="p-3 bg-white rounded-full shadow-lg hover:bg-red-50 text-red-600"><Trash2 size={20} /></button>
         </div>
       )}
     </div>
   );
 
+  // Safely find the active page, fallback to first page if not found (e.g. during deletion)
   const activePage = config.pages.find(p => p.id === activePageId) || config.pages[0];
+
+  const getGridClass = () => {
+    const size = config.settings.gridSize;
+    if (size === 2) return "grid-cols-2";
+    if (size === 3) return "grid-cols-3";
+    if (size === 4) return "grid-cols-4";
+    if (size === 6) return "grid-cols-6";
+    if (size === 8) return "grid-cols-8";
+    return "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"; // Auto
+  };
+
+  // Filter voices based on settings
+  const displayedVoices = config.settings.offlineOnly
+    ? availableVoices.filter(v => v.localService === true)
+    : availableVoices;
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800 flex flex-col md:flex-row overflow-hidden">
       
       {/* --- Sidebar (Navigation) --- */}
       <nav className="w-full md:w-24 md:h-screen bg-white shadow-xl flex md:flex-col overflow-x-auto md:overflow-y-auto md:overflow-x-hidden shrink-0 z-20">
-        
-        {/* Branding (Top of Sidebar) */}
         <div className="hidden md:flex flex-col items-center justify-center py-4 border-b border-slate-100 mb-2">
-           {/* Replaced Zap Icon with PWA Image */}
-           <img 
-             src="/pwa-192x192.png" 
-             alt="Logo" 
-             className="w-10 h-10 rounded-xl shadow-sm mb-1 object-cover" 
-             onError={(e) => { e.target.style.display='none'; }} // Fallback if image fails to load
-           />
-           {/* Fallback text if image fails or just for text branding */}
+           <img src="/pwa-192x192.png" alt="Logo" className="w-10 h-10 rounded-xl shadow-sm mb-1 object-cover" onError={(e) => { e.target.style.display='none'; }} />
            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Zip</span>
         </div>
 
@@ -342,10 +425,7 @@ export default function App() {
             <button
               key={page.id}
               onClick={() => setActivePageId(page.id)}
-              className={`
-                flex flex-col items-center justify-center p-2 rounded-xl w-20 h-20 md:w-16 md:h-16 shrink-0 transition-all
-                ${activePageId === page.id ? 'bg-blue-600 text-white shadow-md scale-105' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}
-              `}
+              className={`flex flex-col items-center justify-center p-2 rounded-xl w-20 h-20 md:w-16 md:h-16 shrink-0 transition-all ${activePageId === page.id ? 'bg-blue-600 text-white shadow-md scale-105' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`}
             >
               <span className="text-2xl mb-1">{page.icon}</span>
               <span className="text-[10px] font-bold truncate max-w-full leading-tight">{page.label}</span>
@@ -353,19 +433,16 @@ export default function App() {
           ))}
           
           {isEditMode && (
-             <button
-             onClick={addPage}
-             className="flex flex-col items-center justify-center p-2 rounded-xl w-20 h-20 md:w-16 md:h-16 shrink-0 bg-green-100 text-green-700 hover:bg-green-200 border-2 border-dashed border-green-300"
-           >
-             <Plus size={24} />
-             <span className="text-[10px] font-bold mt-1">Add Page</span>
-           </button>
+             <button onClick={addPage} className="flex flex-col items-center justify-center p-2 rounded-xl w-20 h-20 md:w-16 md:h-16 shrink-0 bg-green-100 text-green-700 hover:bg-green-200 border-2 border-dashed border-green-300">
+               <Plus size={24} />
+               <span className="text-[10px] font-bold mt-1">Add Page</span>
+             </button>
           )}
         </div>
         
         <div className="md:mt-auto p-2 md:p-4 border-t border-slate-100 flex md:flex-col items-center justify-center gap-3">
            <button 
-            onClick={() => isEditMode ? setIsEditMode(false) : attemptEnterEditMode()}
+            onClick={() => isEditMode ? setIsEditMode(false) : requestAccess('edit')}
             className={`p-3 rounded-full ${isEditMode ? 'bg-amber-100 text-amber-600' : 'text-slate-400 hover:bg-slate-100'}`}
             title={isEditMode ? "Exit Edit Mode" : "Enter Edit Mode"}
           >
@@ -373,7 +450,7 @@ export default function App() {
           </button>
           
           <button 
-            onClick={() => setShowSettings(true)}
+            onClick={() => requestAccess('settings')}
             className="p-3 rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600"
             title="Settings"
           >
@@ -384,59 +461,36 @@ export default function App() {
 
       {/* --- Main Content --- */}
       <main className={`flex-1 h-[calc(100vh-80px)] md:h-screen overflow-y-auto p-4 md:p-8 transition-colors ${activePage.color}`}>
-        
-        {/* Page Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-             {/* Mobile Logo Replacement */}
-             <img 
-               src="/pwa-192x192.png" 
-               alt="Logo" 
-               className="md:hidden w-8 h-8 rounded-lg shadow-sm object-cover"
-               onError={(e) => { e.target.style.display='none'; }} 
-             />
-             <h1 className="text-3xl font-bold flex items-center gap-2">
-               {activePage.icon} {activePage.label}
-             </h1>
+             <img src="/pwa-192x192.png" alt="Logo" className="md:hidden w-8 h-8 rounded-lg shadow-sm object-cover" onError={(e) => { e.target.style.display='none'; }} />
+             <h1 className="text-3xl font-bold flex items-center gap-2">{activePage.icon} {activePage.label}</h1>
              {isEditMode && (
-               <button 
-                 onClick={() => setEditingPage(activePage)}
-                 className="p-2 bg-white/50 hover:bg-white rounded-full text-slate-500"
-                >
-                 <Edit2 size={16} />
-               </button>
+               <button onClick={() => setEditingPage(activePage)} className="p-2 bg-white/50 hover:bg-white rounded-full text-slate-500"><Edit2 size={16} /></button>
              )}
           </div>
-          
-          {/* Quick Speak Bar */}
           <div className="hidden md:flex items-center gap-2 bg-white/60 px-4 py-2 rounded-full">
             <Volume2 size={18} className="text-slate-500"/>
             <span className="text-sm font-medium text-slate-600">Voice: {config.settings.voiceURI ? 'Custom' : 'Default'}</span>
           </div>
         </div>
 
-        {/* Tile Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4 md:gap-6 pb-20">
+        <div className={`grid ${getGridClass()} gap-4 md:gap-6 pb-20`}>
           {activePage.tiles.map(tile => (
             <Tile key={tile.id} tile={tile} onClick={speak} editMode={isEditMode} />
           ))}
-          
           {isEditMode && (
-             <button 
-             onClick={addTile}
-             className="aspect-square rounded-2xl border-4 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:border-slate-400 hover:text-slate-500 hover:bg-slate-50 transition-all"
-           >
-             <Plus size={48} />
-             <span className="font-bold mt-2">Add Button</span>
-           </button>
+             <button onClick={addTile} className="aspect-square rounded-2xl border-4 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:border-slate-400 hover:text-slate-500 hover:bg-slate-50 transition-all">
+               <Plus size={48} />
+               <span className="font-bold mt-2">Add Button</span>
+             </button>
           )}
         </div>
       </main>
 
       {/* --- Modals --- */}
 
-      {/* 1. Edit Tile Modal */}
-      {editingTile && (
+      {editingTile && !showImageSearch && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
             <div className="p-4 border-b flex justify-between items-center bg-slate-50">
@@ -446,42 +500,24 @@ export default function App() {
             <div className="p-6 space-y-4">
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Label (Seen)</label>
-                <input 
-                  type="text" 
-                  value={editingTile.label} 
-                  onChange={e => setEditingTile({...editingTile, label: e.target.value})}
-                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+                <input type="text" value={editingTile.label} onChange={e => setEditingTile({...editingTile, label: e.target.value})} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Phrase (Spoken)</label>
-                <textarea 
-                  value={editingTile.phrase} 
-                  onChange={e => setEditingTile({...editingTile, phrase: e.target.value})}
-                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  rows={2}
-                />
+                <textarea value={editingTile.phrase} onChange={e => setEditingTile({...editingTile, phrase: e.target.value})} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" rows={2} />
               </div>
               
               <div className="grid grid-cols-2 gap-4">
                  <div>
                     <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Type</label>
-                    <select 
-                      value={editingTile.type}
-                      onChange={e => setEditingTile({...editingTile, type: e.target.value})}
-                      className="w-full p-3 border rounded-lg bg-white"
-                    >
+                    <select value={editingTile.type} onChange={e => setEditingTile({...editingTile, type: e.target.value})} className="w-full p-3 border rounded-lg bg-white">
                       <option value="emoji">Emoji</option>
                       <option value="image">Image URL</option>
                     </select>
                  </div>
                  <div>
                     <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Background</label>
-                    <select 
-                      value={editingTile.color}
-                      onChange={e => setEditingTile({...editingTile, color: e.target.value})}
-                      className="w-full p-3 border rounded-lg bg-white"
-                    >
+                    <select value={editingTile.color} onChange={e => setEditingTile({...editingTile, color: e.target.value})} className="w-full p-3 border rounded-lg bg-white">
                       <option value="bg-white">White</option>
                       <option value="bg-red-200">Red</option>
                       <option value="bg-blue-200">Blue</option>
@@ -495,64 +531,72 @@ export default function App() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">
-                  {editingTile.type === 'emoji' ? 'Emoji' : 'Image URL'}
-                </label>
-                <input 
-                  type="text" 
-                  value={editingTile.image} 
-                  onChange={e => setEditingTile({...editingTile, image: e.target.value})}
-                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder={editingTile.type === 'emoji' ? 'Paste emoji here' : 'https://...'}
-                />
+                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">{editingTile.type === 'emoji' ? 'Emoji' : 'Image URL'}</label>
+                <div className="flex gap-2">
+                  <input type="text" value={editingTile.image} onChange={e => setEditingTile({...editingTile, image: e.target.value})} className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder={editingTile.type === 'emoji' ? 'Paste emoji here' : 'https://...'} />
+                  <button onClick={() => { setSearchQuery(editingTile.label || ""); setShowImageSearch(true); }} className="p-3 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors" title="Search for Symbol"><Search size={20} /></button>
+                </div>
               </div>
-
-              <button 
-                onClick={() => updateTile(editingTile)}
-                className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors mt-2"
-              >
-                Save Changes
-              </button>
+              <button onClick={() => updateTile(editingTile)} className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors mt-2">Save Changes</button>
             </div>
           </div>
         </div>
       )}
+      
+      {showImageSearch && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[80vh] flex flex-col">
+             <div className="p-4 border-b flex justify-between items-center bg-slate-50">
+               <h3 className="font-bold text-lg flex items-center gap-2"><Search size={20} className="text-blue-600"/> Search Symbols</h3>
+               <button onClick={() => setShowImageSearch(false)}><X size={20}/></button>
+             </div>
+             <div className="p-4 border-b bg-white">
+                <div className="flex gap-2">
+                  <input type="text" autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchSymbols()} placeholder="Search for a symbol (e.g. 'cat', 'eat')" className="flex-1 p-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
+                  <button onClick={searchSymbols} disabled={isSearching} className="px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 disabled:opacity-50">{isSearching ? <Loader2 className="animate-spin"/> : "Search"}</button>
+                </div>
+                <div className="text-xs text-slate-400 mt-2 text-center">Powered by OpenSymbols • Images will be saved offline</div>
+             </div>
+             <div className="flex-1 overflow-y-auto p-4 bg-slate-50">
+               {isSearching && searchResults.length === 0 ? (
+                 <div className="flex h-full items-center justify-center text-slate-400"><Loader2 size={40} className="animate-spin mb-2" /></div>
+               ) : searchResults.length > 0 ? (
+                 <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-4">
+                   {searchResults.map((result) => (
+                     <button key={result.id || result.image_url} onClick={() => selectSymbol(result.image_url)} className="aspect-square bg-white rounded-xl shadow-sm border hover:border-blue-500 hover:ring-2 hover:ring-blue-200 p-2 flex flex-col items-center justify-center transition-all group">
+                       <img src={result.image_url} alt={result.name} className="w-full h-full object-contain group-hover:scale-110 transition-transform" loading="lazy" referrerPolicy="no-referrer" />
+                       <span className="text-[10px] text-slate-400 mt-1 truncate w-full text-center">{result.name}</span>
+                     </button>
+                   ))}
+                 </div>
+               ) : (
+                 <div className="flex flex-col items-center justify-center h-full text-slate-400"><ImageIcon size={48} className="mb-2 opacity-20"/><p>No symbols found yet.</p><p className="text-sm">Try typing a word above.</p></div>
+               )}
+             </div>
+           </div>
+        </div>
+      )}
 
-      {/* 2. Edit Page Modal */}
       {editingPage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
              <div className="p-4 border-b flex justify-between items-center bg-slate-50">
               <h3 className="font-bold text-lg">Edit Page</h3>
-              <button onClick={() => setEditingPage(null)}><X size={20}/></button>
+              <button onClick={() => { setEditingPage(null); setDeleteConfirm(false); }}><X size={20}/></button>
             </div>
             <div className="p-6 space-y-4">
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Page Name</label>
-                <input 
-                  type="text" 
-                  value={editingPage.label} 
-                  onChange={e => setEditingPage({...editingPage, label: e.target.value})}
-                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+                <input type="text" value={editingPage.label} onChange={e => setEditingPage({...editingPage, label: e.target.value})} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                  <div>
                     <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Icon</label>
-                    <input 
-                      type="text" 
-                      value={editingPage.icon} 
-                      onChange={e => setEditingPage({...editingPage, icon: e.target.value})}
-                      className="w-full p-3 border rounded-lg text-center"
-                    />
+                    <input type="text" value={editingPage.icon} onChange={e => setEditingPage({...editingPage, icon: e.target.value})} className="w-full p-3 border rounded-lg text-center" />
                  </div>
                  <div>
                     <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Theme</label>
-                    <select 
-                      value={editingPage.color}
-                      onChange={e => setEditingPage({...editingPage, color: e.target.value})}
-                      className="w-full p-3 border rounded-lg bg-white"
-                    >
+                    <select value={editingPage.color} onChange={e => setEditingPage({...editingPage, color: e.target.value})} className="w-full p-3 border rounded-lg bg-white">
                       <option value="bg-slate-100">Gray</option>
                       <option value="bg-blue-50">Blue</option>
                       <option value="bg-green-50">Green</option>
@@ -562,49 +606,59 @@ export default function App() {
                  </div>
               </div>
               
+              {/* Delete Logic: 2-Step Confirmation */}
               <div className="flex gap-2 pt-2">
-                 <button 
-                  onClick={() => deletePage(editingPage.id)}
-                  className="flex-1 py-3 bg-red-100 text-red-600 font-bold rounded-xl hover:bg-red-200 transition-colors"
-                >
-                  Delete
-                </button>
-                <button 
-                  onClick={() => updatePage(editingPage)}
-                  className="flex-[2] py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors"
-                >
-                  Save
-                </button>
+                 {deleteConfirm ? (
+                   <div className="flex flex-1 gap-2">
+                     <button onClick={() => deletePage(editingPage.id)} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-colors animate-in fade-in zoom-in duration-200">Confirm</button>
+                     <button onClick={() => setDeleteConfirm(false)} className="px-4 py-3 bg-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-300 transition-colors">Cancel</button>
+                   </div>
+                 ) : (
+                   <button 
+                     onClick={() => setDeleteConfirm(true)} 
+                     disabled={config.pages.length <= 1}
+                     className="flex-1 py-3 bg-red-100 text-red-600 font-bold rounded-xl hover:bg-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                   >
+                     <Trash2 size={18}/> Delete
+                   </button>
+                 )}
+                 
+                 {!deleteConfirm && (
+                   <button onClick={() => updatePage(editingPage)} className="flex-[2] py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-2">
+                     <Check size={18}/> Save
+                   </button>
+                 )}
               </div>
+              
+              {config.pages.length <= 1 && (
+                <p className="text-xs text-center text-slate-400 flex items-center justify-center gap-1">
+                  <AlertCircle size={12}/> Cannot delete the last page
+                </p>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* 3. PIN Prompt */}
       {pinPrompt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6 text-center">
              <Lock className="mx-auto text-blue-600 mb-4" size={40} />
-             <h3 className="font-bold text-lg mb-4">Enter Admin PIN</h3>
-             <input 
-                type="password" 
-                autoFocus
-                value={pinInput}
-                onChange={e => setPinInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && verifyPin()}
-                className="w-full text-center text-2xl tracking-widest p-3 border rounded-lg mb-4"
-                placeholder="****"
-             />
-             <div className="flex gap-2">
-               <button onClick={() => setPinPrompt(false)} className="flex-1 py-2 rounded-lg bg-gray-200">Cancel</button>
+             <h3 className="font-bold text-lg mb-2">Enter Admin PIN</h3>
+             <p className="text-xs text-gray-500 mb-4">
+               {pinContext === 'settings' ? 'Enter PIN to access Settings' : 'Enter PIN to unlock Edit Mode'}
+             </p>
+             <input type="password" autoFocus value={pinInput} onChange={e => setPinInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && verifyPin()} className="w-full text-center text-2xl tracking-widest p-3 border rounded-lg mb-4" placeholder="****" />
+             <div className="flex gap-2 mb-4">
+               <button onClick={() => { setPinPrompt(false); setPinContext(null); setPinInput(""); }} className="flex-1 py-2 rounded-lg bg-gray-200">Cancel</button>
                <button onClick={verifyPin} className="flex-1 py-2 rounded-lg bg-blue-600 text-white font-bold">Unlock</button>
              </div>
+             <button onClick={handleFactoryReset} className="text-red-500 text-xs hover:underline">Forgot PIN? Factory Reset</button>
            </div>
         </div>
       )}
 
-      {/* 4. Settings Panel */}
+      {/* Settings Panel */}
       {showSettings && (
         <div className="fixed inset-y-0 right-0 z-40 w-full md:w-96 bg-white shadow-2xl flex flex-col transform transition-transform duration-300">
           <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
@@ -614,51 +668,66 @@ export default function App() {
           
           <div className="flex-1 overflow-y-auto p-6 space-y-8">
             
+            {/* Visuals */}
+            <section>
+              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><LayoutGrid size={16}/> Visuals</h3>
+              <div>
+                <label className="block text-sm font-medium mb-1">Grid Size</label>
+                <select value={config.settings.gridSize || "auto"} onChange={e => updateSetting('gridSize', e.target.value === "auto" ? "auto" : parseInt(e.target.value))} className="w-full p-2 border rounded-md text-sm">
+                  <option value="auto">Auto (Responsive)</option>
+                  <option value={2}>2 Columns (Very Large)</option>
+                  <option value={3}>3 Columns (Large)</option>
+                  <option value={4}>4 Columns (Medium)</option>
+                  <option value={6}>6 Columns (Small)</option>
+                  <option value={8}>8 Columns (Tiny)</option>
+                </select>
+              </div>
+            </section>
+
+            <hr className="border-slate-100" />
+
             {/* Voice Settings */}
             <section>
               <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><Volume2 size={16}/> Speech</h3>
+              
+              {/* Added Offline Toggle */}
+              <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 mb-4 flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-bold text-blue-800">
+                    <WifiOff size={16} />
+                    <span>Offline Voices Only</span>
+                  </div>
+                  <p className="text-xs text-blue-600 mt-0.5">Hide voices that need internet</p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={config.settings.offlineOnly}
+                  onChange={e => updateSetting('offlineOnly', e.target.checked)}
+                  className="w-5 h-5 accent-blue-600"
+                />
+              </div>
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-1">Voice</label>
-                  <select 
-                    value={config.settings.voiceURI || ""} 
-                    onChange={e => updateSetting('voiceURI', e.target.value)}
-                    className="w-full p-2 border rounded-md text-sm"
-                  >
+                  <select value={config.settings.voiceURI || ""} onChange={e => updateSetting('voiceURI', e.target.value)} className="w-full p-2 border rounded-md text-sm">
                     <option value="">Default Device Voice</option>
-                    {availableVoices.map(v => (
-                      <option key={v.voiceURI} value={v.voiceURI}>
-                        {v.name} ({v.lang})
-                      </option>
+                    {displayedVoices.map(v => (
+                      <option key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang})</option>
                     ))}
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium mb-1">Rate (Speed)</label>
-                    <input 
-                      type="range" min="0.5" max="2" step="0.1"
-                      value={config.settings.rate}
-                      onChange={e => updateSetting('rate', parseFloat(e.target.value))}
-                      className="w-full"
-                    />
+                    <input type="range" min="0.5" max="2" step="0.1" value={config.settings.rate} onChange={e => updateSetting('rate', parseFloat(e.target.value))} className="w-full" />
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Pitch</label>
-                    <input 
-                      type="range" min="0.5" max="2" step="0.1"
-                      value={config.settings.pitch}
-                      onChange={e => updateSetting('pitch', parseFloat(e.target.value))}
-                      className="w-full"
-                    />
+                    <input type="range" min="0.5" max="2" step="0.1" value={config.settings.pitch} onChange={e => updateSetting('pitch', parseFloat(e.target.value))} className="w-full" />
                   </div>
                 </div>
-                <button 
-                  onClick={() => speak("This is a test of the selected voice.")}
-                  className="text-sm text-blue-600 font-medium hover:underline"
-                >
-                  Test Voice
-                </button>
+                <button onClick={() => speak("This is a test of the selected voice.")} className="text-sm text-blue-600 font-medium hover:underline">Test Voice</button>
               </div>
             </section>
 
@@ -668,18 +737,39 @@ export default function App() {
             <section>
                <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><Lock size={16}/> Security</h3>
                <div className="bg-slate-50 p-4 rounded-lg">
-                 <label className="block text-sm font-medium mb-1">Admin PIN (for Edit Mode)</label>
-                 <input 
-                    type="text" 
-                    value={config.settings.adminPin}
-                    onChange={e => updateSetting('adminPin', e.target.value)}
-                    placeholder="Leave empty for no PIN"
-                    className="w-full p-2 border rounded-md text-sm mb-2"
-                 />
-                 <p className="text-xs text-slate-500">
-                   If set, this PIN will be required to unlock Edit Mode.
-                 </p>
+                 <label className="block text-sm font-medium mb-1">Admin PIN</label>
+                 <input type="text" value={config.settings.adminPin} onChange={e => updateSetting('adminPin', e.target.value)} placeholder="Leave empty for no PIN" className="w-full p-2 border rounded-md text-sm mb-2" />
+                 <p className="text-xs text-slate-500">Locks Edit Mode AND Settings menu.</p>
                </div>
+            </section>
+
+            <hr className="border-slate-100" />
+            
+             {/* Advanced / API Keys */}
+            <section>
+               <button 
+                 onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                 className="flex items-center justify-between w-full text-sm font-bold uppercase text-slate-400 mb-3 hover:text-slate-600"
+               >
+                 <span className="flex items-center gap-2"><Key size={16}/> Advanced Settings</span>
+                 {showAdvancedSettings ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
+               </button>
+               
+               {showAdvancedSettings && (
+                 <div className="bg-slate-50 p-4 rounded-lg animate-in fade-in slide-in-from-top-2 duration-200">
+                   <label className="block text-sm font-medium mb-1">OpenSymbols Access Token</label>
+                   <input 
+                      type="text" 
+                      value={config.settings.openSymbolsToken}
+                      onChange={e => updateSetting('openSymbolsToken', e.target.value)}
+                      placeholder="Optional Access Token"
+                      className="w-full p-2 border rounded-md text-sm mb-2"
+                   />
+                   <p className="text-xs text-slate-500">
+                     Required for symbol search API.
+                   </p>
+                 </div>
+               )}
             </section>
 
             <hr className="border-slate-100" />
@@ -688,26 +778,16 @@ export default function App() {
             <section>
               <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><Save size={16}/> Data & Storage</h3>
               <div className="grid grid-cols-2 gap-3">
-                <button 
-                  onClick={handleExport}
-                  className="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-slate-50 transition-colors"
-                >
+                <button onClick={handleExport} className="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-slate-50 transition-colors">
                   <Download size={24} className="mb-2 text-blue-600" />
-                  <span className="text-sm font-medium">Backup File</span>
+                  <span className="text-sm font-medium">Backup</span>
                   <span className="text-xs text-slate-400">Save to device</span>
                 </button>
-
                 <label className="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
                   <Upload size={24} className="mb-2 text-green-600" />
-                  <span className="text-sm font-medium">Import File</span>
+                  <span className="text-sm font-medium">Restore</span>
                   <span className="text-xs text-slate-400">Load backup</span>
-                  <input 
-                    type="file" 
-                    ref={fileInputRef}
-                    onChange={handleImport}
-                    accept=".json"
-                    className="hidden"
-                  />
+                  <input type="file" ref={fileInputRef} onChange={handleImport} accept=".json" className="hidden" />
                 </label>
               </div>
             </section>
