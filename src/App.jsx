@@ -44,8 +44,7 @@ const DEFAULT_CONFIG = {
     pitch: 1.0,
     volume: 1.0,
     adminPin: "",
-    openSymbolsClientId: "",     // Changed from single token
-    openSymbolsClientSecret: "", // Added secret
+    openSymbolsSecret: "", // Changed to single Shared Secret
     gridSize: "auto",
     offlineOnly: false,
     enableSentenceBuilder: false, // Toggle for the new mode
@@ -240,53 +239,44 @@ export default function App() {
 
   // --- Proxy & Search ---
   const getProxyUrl = (url) => {
-    // UPDATED: Use AllOrigins for everything (Live & Dev)
+    // Use AllOrigins for everything (Live & Dev) for GET requests
     return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
   };
 
-  // New Function: Exchange Client ID/Secret for Access Token
+  // Function: Exchange Shared Secret for Access Token
   const fetchAuthToken = async () => {
-    // Get creds from Settings OR Env Vars
-    let clientId = config.settings.openSymbolsClientId;
-    let clientSecret = config.settings.openSymbolsClientSecret;
+    // Get secret from Settings OR Env Vars
+    let secret = config.settings.openSymbolsSecret;
 
-    // Fallback to env vars if not in settings
     try {
       if (import.meta && import.meta.env) {
-        if (!clientId) clientId = import.meta.env.VITE_OPENSYMBOLS_CLIENT_ID;
-        if (!clientSecret) clientSecret = import.meta.env.VITE_OPENSYMBOLS_CLIENT_SECRET;
+        if (!secret) secret = import.meta.env.VITE_OPENSYMBOLS_SECRET || "";
       }
     } catch (e) { }
 
-    if (!clientId || !clientSecret) {
-      throw new Error("Missing Client ID or Secret");
+    if (!secret) {
+      throw new Error("Missing Shared Secret");
     }
 
     try {
-      const tokenUrl = "https://www.opensymbols.org/oauth/token";
-      const body = new FormData();
-      body.append('grant_type', 'client_credentials');
-      body.append('client_id', clientId.trim());
-      body.append('client_secret', clientSecret.trim());
+      const tokenUrl = "https://www.opensymbols.org/api/v2/token";
 
-      // Note: Token endpoint usually needs POST. AllOrigins supports this if we use the JSONP wrapper or standard fetch
-      // However, OpenSymbols might accept a GET with params or we use the proxy for POST
-      // Simple fetch to proxy for POST is tricky. 
-      // Alternative: OpenSymbols usually allows `access_token` query param if we already have it.
-      // If we must POST, we try direct first (CORS might block), then proxy.
-
-      // Let's try direct POST first. If CORS fails, we are stuck unless we use a specialized proxy.
-      // Luckily, AllOrigins forwards POSTs if configured, but standard usage is GET.
-
-      // Attempt standard POST (Many OAuth endpoints support CORS)
+      // POST the secret to get the token
+      // Note: We try a direct POST. Standard CORS rules usually apply here.
+      // If OpenSymbols blocks cross-origin POST, this will fail without a backend proxy.
       const res = await fetch(tokenUrl, {
         method: 'POST',
-        body: body
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ secret: secret.trim() })
       });
 
       if (!res.ok) throw new Error("Auth Failed");
       const data = await res.json();
-      return data.access_token;
+
+      if (data.access_token) return data.access_token;
+      throw new Error("No token returned in response");
 
     } catch (e) {
       console.error("Token exchange failed", e);
@@ -302,13 +292,16 @@ export default function App() {
     try {
       // 1. Get Token (Memory -> Fetch)
       let token = accessToken;
+
+      // Only fetch if we don't have one
       if (!token) {
         try {
           token = await fetchAuthToken();
           setAccessToken(token); // Save to state
+          console.log("Token obtained successfully");
         } catch (e) {
-          console.log("No auth token, trying public search...");
-          // Some APIs allow public search without token, or with limited rate
+          console.log("No auth token obtained (" + e.message + ")");
+          throw new Error("Authentication failed. Check Shared Secret.");
         }
       }
 
@@ -316,11 +309,19 @@ export default function App() {
       let target = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}`;
       if (token) target += `&access_token=${token}`;
 
+      // Use AllOrigins proxy for the GET request to avoid CORS on search
       const res = await fetch(getProxyUrl(target));
-      const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.detail || data.error || "API Error");
+        const txt = await res.text();
+        throw new Error(`API Error: ${res.status} ${txt}`);
+      }
+
+      let data;
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        throw new Error("Invalid JSON response");
       }
 
       if (Array.isArray(data)) {
@@ -333,7 +334,7 @@ export default function App() {
       }
     } catch (error) {
       console.error(error);
-      alert(`Search failed: ${error.message}. Check Client ID/Secret.`);
+      alert(`Search failed: ${error.message}`);
     } finally {
       setIsSearching(false);
     }
@@ -342,6 +343,7 @@ export default function App() {
   const selectSymbol = async (url) => {
     setIsSearching(true);
     try {
+      // Use AllOrigins proxy for image download too
       const res = await fetch(getProxyUrl(url));
       const blob = await res.blob();
       const reader = new FileReader();
@@ -786,12 +788,8 @@ export default function App() {
               {showAdvancedSettings && (
                 <div className="bg-slate-50 p-4 rounded-lg space-y-2">
                   <div>
-                    <label className="block text-sm font-medium mb-1">Client ID</label>
-                    <input type="text" value={config.settings.openSymbolsClientId} onChange={e => updateSetting('openSymbolsClientId', e.target.value)} placeholder="Client ID" className="w-full p-2 border rounded-md text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Client Secret</label>
-                    <input type="password" value={config.settings.openSymbolsClientSecret} onChange={e => updateSetting('openSymbolsClientSecret', e.target.value)} placeholder="Client Secret" className="w-full p-2 border rounded-md text-sm" />
+                    <label className="block text-sm font-medium mb-1">Shared Secret</label>
+                    <input type="password" value={config.settings.openSymbolsSecret} onChange={e => updateSetting('openSymbolsSecret', e.target.value)} placeholder="Secret" className="w-full p-2 border rounded-md text-sm" />
                   </div>
                   <p className="text-xs text-slate-500">Required for symbol search API.</p>
                 </div>
