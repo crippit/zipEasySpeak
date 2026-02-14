@@ -234,12 +234,9 @@ export default function App() {
 
   // --- Proxy & Search ---
   const getProxyUrl = (url) => {
-    // Check if localhost
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-      return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-    }
-    // Production (Cloudflare Function)
-    return `/api/proxy?url=${encodeURIComponent(url)}`;
+    // UPDATED: Use AllOrigins for everything (Live & Dev)
+    // This bypasses the need for the /api/proxy function
+    return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
   };
 
   const searchSymbols = async () => {
