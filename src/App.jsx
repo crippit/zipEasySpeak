@@ -31,7 +31,7 @@ import {
   Type,
   FilePlus,
   Share,
-  VolumeX // New icon for silent tiles
+  VolumeX
 } from 'lucide-react';
 
 /**
@@ -85,12 +85,40 @@ const DEFAULT_CONFIG = {
   ]
 };
 
+const STORAGE_KEY = 'zip_easyspeak_config';
+
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 export default function App() {
-  // --- Main State ---
-  const [config, setConfig] = useState(DEFAULT_CONFIG);
-  const [activePageId, setActivePageId] = useState(DEFAULT_CONFIG.pages[0].id);
+  // --- Main State with Persistence ---
+  const [config, setConfig] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Deep merge settings to ensure new features (like gridSize) exist even in old saves
+        return {
+          ...DEFAULT_CONFIG,
+          ...parsed,
+          settings: { ...DEFAULT_CONFIG.settings, ...parsed.settings }
+        };
+      }
+    } catch (e) {
+      console.error("Failed to load config from storage", e);
+    }
+    return DEFAULT_CONFIG;
+  });
+
+  const [activePageId, setActivePageId] = useState(() => {
+    // Optional: Persist the last open page too
+    return config.pages[0].id;
+  });
+
+  // Save to localStorage whenever config changes
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  }, [config]);
+
   const [isEditMode, setIsEditMode] = useState(false);
   const [availableVoices, setAvailableVoices] = useState([]);
 
@@ -152,26 +180,19 @@ export default function App() {
   };
 
   const handleTileClick = (tile) => {
-    // Check if tile is silent (action only)
     const isSilent = tile.isSilent === true;
 
-    // 1. Speak Logic (Direct Mode vs Builder Mode)
-    // Only process speech/sentence logic if NOT silent
     if (!isSilent) {
       if (config.settings.enableSentenceBuilder) {
-        // Add to sentence strip
         setSentence(prev => [...prev, tile]);
-        // Optional: Speak individual word while building
         if (config.settings.speakOnSelect) {
           speak(tile.phrase);
         }
       } else {
-        // Direct Mode: Just speak
         speak(tile.phrase);
       }
     }
 
-    // 2. Navigation Logic (Linked Pages) - Runs regardless of silent status
     if (tile.linkToPage && tile.linkToPage !== "") {
       const targetPage = config.pages.find(p => p.id === tile.linkToPage);
       if (targetPage) {
@@ -257,7 +278,7 @@ export default function App() {
   };
 
   const handleFactoryReset = () => {
-    if (window.confirm("WARNING: Reset everything?")) {
+    if (window.confirm("WARNING: This will wipe all pages, buttons, settings, and REMOVE the PIN. This cannot be undone. Are you sure?")) {
       setConfig(DEFAULT_CONFIG);
       setPinPrompt(false);
       setPinInput("");
@@ -792,31 +813,7 @@ export default function App() {
           </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-8">
 
-            {/* Mode Settings */}
-            <section>
-              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><MessageSquare size={16} /> Interaction Mode</h3>
-              <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-bold text-sm">Sentence Builder</div>
-                    <p className="text-xs text-slate-500">Accumulate words in a strip before speaking</p>
-                  </div>
-                  <input type="checkbox" checked={config.settings.enableSentenceBuilder} onChange={e => updateSetting('enableSentenceBuilder', e.target.checked)} className="w-5 h-5 accent-blue-600" />
-                </div>
-                {config.settings.enableSentenceBuilder && (
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-200">
-                    <div>
-                      <div className="font-bold text-sm">Speak on Select</div>
-                      <p className="text-xs text-slate-500">Speak each word as it is added</p>
-                    </div>
-                    <input type="checkbox" checked={config.settings.speakOnSelect} onChange={e => updateSetting('speakOnSelect', e.target.checked)} className="w-5 h-5 accent-blue-600" />
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <hr className="border-slate-100" />
-
+            {/* Visuals */}
             <section>
               <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><LayoutGrid size={16} /> Visuals</h3>
               <div className="space-y-4">
@@ -838,6 +835,31 @@ export default function App() {
                   </div>
                   <input type="checkbox" checked={config.settings.showLabels !== false} onChange={e => updateSetting('showLabels', e.target.checked)} className="w-5 h-5 accent-blue-600" />
                 </div>
+              </div>
+            </section>
+
+            <hr className="border-slate-100" />
+
+            {/* Mode Settings */}
+            <section>
+              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><MessageSquare size={16} /> Interaction Mode</h3>
+              <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-sm">Sentence Builder</div>
+                    <p className="text-xs text-slate-500">Accumulate words in a strip before speaking</p>
+                  </div>
+                  <input type="checkbox" checked={config.settings.enableSentenceBuilder} onChange={e => updateSetting('enableSentenceBuilder', e.target.checked)} className="w-5 h-5 accent-blue-600" />
+                </div>
+                {config.settings.enableSentenceBuilder && (
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                    <div>
+                      <div className="font-bold text-sm">Speak on Select</div>
+                      <p className="text-xs text-slate-500">Speak each word as it is added</p>
+                    </div>
+                    <input type="checkbox" checked={config.settings.speakOnSelect} onChange={e => updateSetting('speakOnSelect', e.target.checked)} className="w-5 h-5 accent-blue-600" />
+                  </div>
+                )}
               </div>
             </section>
 
