@@ -261,19 +261,34 @@ export default function App() {
     try {
       const tokenUrl = "https://www.opensymbols.org/api/v2/token";
 
-      // POST the secret to get the token
-      // Note: We try a direct POST. Standard CORS rules usually apply here.
-      // If OpenSymbols blocks cross-origin POST, this will fail without a backend proxy.
-      const res = await fetch(tokenUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ secret: secret.trim() })
-      });
+      // Attempt 1: Direct POST using Form Data (Better for CORS than JSON)
+      try {
+        const formData = new URLSearchParams();
+        formData.append('secret', secret.trim());
 
-      if (!res.ok) throw new Error("Auth Failed");
-      const data = await res.json();
+        const res = await fetch(tokenUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: formData
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.access_token) return data.access_token;
+        }
+      } catch (corsErr) {
+        console.warn("Direct POST failed, trying fallback...", corsErr);
+      }
+
+      // Attempt 2: GET via AllOrigins Proxy (Fallback)
+      // This constructs a GET request: /api/v2/token?secret=XYZ
+      const targetUrl = `${tokenUrl}?secret=${encodeURIComponent(secret.trim())}`;
+      const proxyRes = await fetch(getProxyUrl(targetUrl));
+
+      if (!proxyRes.ok) throw new Error("Auth Failed via Proxy");
+      const data = await proxyRes.json();
 
       if (data.access_token) return data.access_token;
       throw new Error("No token returned in response");
