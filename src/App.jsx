@@ -190,10 +190,12 @@ export default function App() {
     fileReader.onload = evt => {
       try {
         const imported = JSON.parse(evt.target.result);
-        if (imported.pages) {
+        if (imported.pages && Array.isArray(imported.pages)) {
           setConfig(imported);
           setActivePageId(imported.pages[0].id);
           alert("Loaded!");
+        } else {
+          alert("Invalid config file structure.");
         }
       } catch (err) { alert("Error parsing file."); }
     };
@@ -235,7 +237,6 @@ export default function App() {
   // --- Proxy & Search ---
   const getProxyUrl = (url) => {
     // UPDATED: Use AllOrigins for everything (Live & Dev)
-    // This bypasses the need for the /api/proxy function
     return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
   };
 
@@ -254,9 +255,21 @@ export default function App() {
 
       const res = await fetch(getProxyUrl(target));
       if (!res.ok) throw new Error("API Error");
+
       const data = await res.json();
-      setSearchResults(data);
+
+      // Safety Check: Ensure data is an array before setting it
+      if (Array.isArray(data)) {
+        setSearchResults(data);
+      } else {
+        console.error("API returned non-array:", data);
+        setSearchResults([]);
+        if (data && (data.error || data.detail)) {
+          alert(`Search Error: ${data.error || data.detail}`);
+        }
+      }
     } catch (error) {
+      console.error(error);
       alert("Search failed. Check token or internet.");
     } finally {
       setIsSearching(false);
@@ -434,7 +447,7 @@ export default function App() {
 
         {/* Grid */}
         <div className={`grid ${getGridClass()} gap-4 md:gap-6 pb-20`}>
-          {activePage.tiles.map(tile => (
+          {activePage?.tiles?.map(tile => (
             <Tile key={tile.id} tile={tile} onClick={handleTileClick} editMode={isEditMode} />
           ))}
           {isEditMode && (
@@ -532,13 +545,17 @@ export default function App() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-4 bg-slate-50">
-              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-4">
-                {searchResults.map((result) => (
-                  <button key={result.id || result.image_url} onClick={() => selectSymbol(result.image_url)} className="aspect-square bg-white rounded-xl shadow-sm border p-2 flex flex-col items-center justify-center hover:ring-2 hover:ring-blue-200">
-                    <img src={result.image_url} alt="symbol" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
-                  </button>
-                ))}
-              </div>
+              {Array.isArray(searchResults) && searchResults.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-4">
+                  {searchResults.map((result) => (
+                    <button key={result.id || result.image_url} onClick={() => selectSymbol(result.image_url)} className="aspect-square bg-white rounded-xl shadow-sm border p-2 flex flex-col items-center justify-center hover:ring-2 hover:ring-blue-200">
+                      <img src={result.image_url} alt="symbol" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-slate-400"><ImageIcon size={48} className="mb-2 opacity-20" /><p>No symbols found yet.</p><p className="text-sm">Try typing a word above.</p></div>
+              )}
             </div>
           </div>
         </div>
