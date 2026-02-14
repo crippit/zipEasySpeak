@@ -44,7 +44,8 @@ const DEFAULT_CONFIG = {
     pitch: 1.0,
     volume: 1.0,
     adminPin: "",
-    openSymbolsToken: "",
+    openSymbolsClientId: "",     // Changed from single token
+    openSymbolsClientSecret: "", // Added secret
     gridSize: "auto",
     offlineOnly: false,
     enableSentenceBuilder: false, // Toggle for the new mode
@@ -91,6 +92,9 @@ export default function App() {
 
   // --- Sentence Builder State ---
   const [sentence, setSentence] = useState([]); // Array of tile objects
+
+  // --- Auth State ---
+  const [accessToken, setAccessToken] = useState(null); // Short-lived token
 
   // --- UI State ---
   const [showSettings, setShowSettings] = useState(false);
@@ -240,17 +244,75 @@ export default function App() {
     return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
   };
 
+  // New Function: Exchange Client ID/Secret for Access Token
+  const fetchAuthToken = async () => {
+    // Get creds from Settings OR Env Vars
+    let clientId = config.settings.openSymbolsClientId;
+    let clientSecret = config.settings.openSymbolsClientSecret;
+
+    // Fallback to env vars if not in settings
+    try {
+      if (import.meta && import.meta.env) {
+        if (!clientId) clientId = import.meta.env.VITE_OPENSYMBOLS_CLIENT_ID;
+        if (!clientSecret) clientSecret = import.meta.env.VITE_OPENSYMBOLS_CLIENT_SECRET;
+      }
+    } catch (e) { }
+
+    if (!clientId || !clientSecret) {
+      throw new Error("Missing Client ID or Secret");
+    }
+
+    try {
+      const tokenUrl = "https://www.opensymbols.org/oauth/token";
+      const body = new FormData();
+      body.append('grant_type', 'client_credentials');
+      body.append('client_id', clientId.trim());
+      body.append('client_secret', clientSecret.trim());
+
+      // Note: Token endpoint usually needs POST. AllOrigins supports this if we use the JSONP wrapper or standard fetch
+      // However, OpenSymbols might accept a GET with params or we use the proxy for POST
+      // Simple fetch to proxy for POST is tricky. 
+      // Alternative: OpenSymbols usually allows `access_token` query param if we already have it.
+      // If we must POST, we try direct first (CORS might block), then proxy.
+
+      // Let's try direct POST first. If CORS fails, we are stuck unless we use a specialized proxy.
+      // Luckily, AllOrigins forwards POSTs if configured, but standard usage is GET.
+
+      // Attempt standard POST (Many OAuth endpoints support CORS)
+      const res = await fetch(tokenUrl, {
+        method: 'POST',
+        body: body
+      });
+
+      if (!res.ok) throw new Error("Auth Failed");
+      const data = await res.json();
+      return data.access_token;
+
+    } catch (e) {
+      console.error("Token exchange failed", e);
+      throw e;
+    }
+  };
+
   const searchSymbols = async () => {
     if (!searchQuery.trim()) return;
     setIsSearching(true);
     setSearchResults([]);
 
-    let envToken = "";
-    try { if (import.meta && import.meta.env) envToken = import.meta.env.VITE_OPENSYMBOLS_TOKEN || ""; } catch (e) { }
-    // TRIM the token to avoid issues with spaces from copy-paste
-    const token = (config.settings.openSymbolsToken || envToken).trim();
-
     try {
+      // 1. Get Token (Memory -> Fetch)
+      let token = accessToken;
+      if (!token) {
+        try {
+          token = await fetchAuthToken();
+          setAccessToken(token); // Save to state
+        } catch (e) {
+          console.log("No auth token, trying public search...");
+          // Some APIs allow public search without token, or with limited rate
+        }
+      }
+
+      // 2. Perform Search
       let target = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}`;
       if (token) target += `&access_token=${token}`;
 
@@ -258,24 +320,20 @@ export default function App() {
       const data = await res.json();
 
       if (!res.ok) {
-        // If AllOrigins returns an error, it might be the upstream API 
         throw new Error(data.detail || data.error || "API Error");
       }
 
-      // Safety Check: Ensure data is an array before setting it
       if (Array.isArray(data)) {
         setSearchResults(data);
       } else {
-        console.error("API returned non-array:", data);
         setSearchResults([]);
         if (data && (data.error || data.detail)) {
-          // Provide detailed error feedback
           alert(`Search Error: ${data.error || data.detail}`);
         }
       }
     } catch (error) {
       console.error(error);
-      alert(`Search failed: ${error.message}. Check token.`);
+      alert(`Search failed: ${error.message}. Check Client ID/Secret.`);
     } finally {
       setIsSearching(false);
     }
@@ -726,9 +784,16 @@ export default function App() {
                 {showAdvancedSettings ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </button>
               {showAdvancedSettings && (
-                <div className="bg-slate-50 p-4 rounded-lg">
-                  <label className="block text-sm font-medium mb-1">OpenSymbols Access Token</label>
-                  <input type="text" value={config.settings.openSymbolsToken} onChange={e => updateSetting('openSymbolsToken', e.target.value)} placeholder="Optional Access Token" className="w-full p-2 border rounded-md text-sm mb-2" />
+                <div className="bg-slate-50 p-4 rounded-lg space-y-2">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Client ID</label>
+                    <input type="text" value={config.settings.openSymbolsClientId} onChange={e => updateSetting('openSymbolsClientId', e.target.value)} placeholder="Client ID" className="w-full p-2 border rounded-md text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Client Secret</label>
+                    <input type="password" value={config.settings.openSymbolsClientSecret} onChange={e => updateSetting('openSymbolsClientSecret', e.target.value)} placeholder="Client Secret" className="w-full p-2 border rounded-md text-sm" />
+                  </div>
+                  <p className="text-xs text-slate-500">Required for symbol search API.</p>
                 </div>
               )}
             </section>
