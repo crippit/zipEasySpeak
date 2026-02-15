@@ -8,39 +8,36 @@ export async function onRequest(context) {
     return new Response('Missing url parameter', { status: 400 });
   }
 
-  // 2. Validate: Request Origin (Stop external abuse)
-  // We check if the request is coming from the same site (browser behavior)
-  // 'Sec-Fetch-Site' header is a robust way to prevent cross-site usage.
+  // 2. Security: Origin Check (Stop external abuse)
   const fetchSite = request.headers.get('Sec-Fetch-Site');
-  const origin = request.headers.get('Origin');
-  
-  // Allow 'same-origin' (production) and 'none' (often tools/mobile apps)
-  // We explicitly block 'cross-site' which would be another website trying to use your proxy.
   if (fetchSite === 'cross-site') {
     return new Response('Forbidden: Cross-Site Request', { status: 403 });
   }
 
+  // 3. Set allowed origins for CORS
+  const origin = request.headers.get('Origin');
+  const allowedOrigins = ['https://easyspeak.zipsolutions.org', 'https://zipeasyspeak.pages.dev'];
+  const allowOrigin = allowedOrigins.includes(origin) ? origin : 'null';
+
   try {
-    // 3. Security: Target Whitelist Logic
+    // 4. Security: Target Whitelist Logic
     const targetObj = new URL(targetUrl);
-    
+
     // Rule A: Allow OpenSymbols API (Search)
     const isOpenSymbolsAPI = targetObj.hostname === 'www.opensymbols.org';
 
-    // 4. Fetch the resource
+    // 5. Fetch the resource
     const response = await fetch(targetUrl, {
       headers: {
         'User-Agent': 'ZipEasySpeak/1.0',
         // Forward auth header if present, but strictly only to OpenSymbols
-        ...(isOpenSymbolsAPI && request.headers.get('Authorization') 
-            ? { 'Authorization': request.headers.get('Authorization') } 
-            : {})
+        ...(isOpenSymbolsAPI && request.headers.get('Authorization')
+          ? { 'Authorization': request.headers.get('Authorization') }
+          : {})
       }
     });
 
-    // 5. Security: Content-Type Check (Anti-Abuse)
-    // If it's NOT OpenSymbols API, we MUST ensure we are only proxying Images.
-    // This prevents people from using your proxy to browse the web or attack servers.
+    // 6. Security: Content-Type Check (Anti-Abuse)
     const contentType = response.headers.get('content-type');
     const isImage = contentType && contentType.startsWith('image/');
     const isJSON = contentType && contentType.includes('application/json');
@@ -49,15 +46,15 @@ export async function onRequest(context) {
       return new Response('Forbidden: Proxy only allows images or OpenSymbols API', { status: 403 });
     }
 
-    // 6. Return Response
+    // 7. Return Response
     const newResponse = new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
       headers: new Headers(response.headers)
     });
 
-    // Standard CORS headers for your app
-    newResponse.headers.set('Access-Control-Allow-Origin', '*');
+    // CORS headers
+    newResponse.headers.set('Access-Control-Allow-Origin', allowOrigin);
     newResponse.headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
 
     return newResponse;

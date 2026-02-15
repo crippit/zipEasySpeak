@@ -109,6 +109,8 @@ export default function App() {
   });
 
   const [activePageId, setActivePageId] = useState(() => {
+    // Check if the current activePageId actually exists in the config
+    const pageExists = config.pages.some(p => p.id === config.activePageId); // Note: config doesn't store activePageId directly usually, but let's default to first
     return config.pages[0].id;
   });
 
@@ -120,10 +122,10 @@ export default function App() {
   const [availableVoices, setAvailableVoices] = useState([]);
 
   // --- Sentence Builder State ---
-  const [sentence, setSentence] = useState([]);
+  const [sentence, setSentence] = useState([]); // Array of tile objects
 
   // --- Auth State ---
-  const [accessToken, setAccessToken] = useState(null);
+  const [accessToken, setAccessToken] = useState(null); // The actual Access Token (not secret)
 
   // --- UI State ---
   const [showSettings, setShowSettings] = useState(false);
@@ -275,7 +277,7 @@ export default function App() {
   };
 
   const handleFactoryReset = () => {
-    if (window.confirm("WARNING: This will wipe all pages, buttons, settings, and REMOVE the PIN. This cannot be undone. Are you sure?")) {
+    if (window.confirm("WARNING: Reset everything?")) {
       setConfig(DEFAULT_CONFIG);
       setPinPrompt(false);
       setPinInput("");
@@ -307,18 +309,27 @@ export default function App() {
     }
   };
 
-  // --- Internal Proxy Logic ---
+  // --- Proxy & Search ---
 
-  // Use our Cloudflare Function for fetching Auth Token (POST)
+  // Unified Proxy Helper using Cloudflare Functions
+  const getProxyUrl = (url) => {
+    // Points to functions/api/proxy.js
+    return `/api/proxy?url=${encodeURIComponent(url)}`;
+  };
+
   const fetchAuthToken = async () => {
     let secret = config.settings.openSymbolsSecret;
-    // Check environment variable (no import.meta check needed for CF build)
+    try {
+      if (import.meta && import.meta.env) {
+        if (!secret) secret = import.meta.env.VITE_OPENSYMBOLS_SECRET || "";
+      }
+    } catch (e) { }
+
     if (!secret) {
-      try { secret = import.meta.env.VITE_OPENSYMBOLS_SECRET || ""; } catch (e) { }
+      throw new Error("Missing Shared Secret. Please add it in Settings.");
     }
 
-    if (!secret) throw new Error("Missing Shared Secret");
-
+    // Try Internal Function (Best for Production)
     try {
       const res = await fetch('/api/token', {
         method: 'POST',
@@ -326,23 +337,17 @@ export default function App() {
         body: JSON.stringify({ secret: secret.trim() })
       });
 
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Auth Error: ${text}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.access_token) return data.access_token;
+      } else {
+        const txt = await res.text();
+        throw new Error(txt);
       }
-
-      const data = await res.json();
-      if (data.access_token) return data.access_token;
-      throw new Error("No token returned");
     } catch (e) {
       console.error("Auth failed:", e);
-      throw e;
+      throw new Error("Authentication failed. Check secret.");
     }
-  };
-
-  // Use our Cloudflare Function for fetching Search Results/Images (GET)
-  const getInternalProxyUrl = (url) => {
-    return `/api/proxy?url=${encodeURIComponent(url)}`;
   };
 
   const searchSymbols = async () => {
@@ -351,33 +356,40 @@ export default function App() {
     setSearchResults([]);
 
     try {
-      // 1. Get Token
       let token = accessToken;
+
       if (!token) {
         try {
           token = await fetchAuthToken();
           setAccessToken(token);
         } catch (e) {
           console.log("Token fetch failed", e);
-          // Proceeding without token might fail, but we'll try
         }
       }
 
-      // 2. Search
       let target = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}`;
       if (token) target += `&access_token=${token}`;
 
-      const res = await fetch(getInternalProxyUrl(target));
-      if (!res.ok) throw new Error("API Fetch Error");
+      const res = await fetch(getProxyUrl(target));
 
-      const data = await res.json();
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`API Error: ${res.status} ${txt}`);
+      }
+
+      let data;
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        throw new Error("Invalid JSON response");
+      }
 
       if (Array.isArray(data)) {
         setSearchResults(data);
       } else {
         setSearchResults([]);
-        if (data.error || data.detail) {
-          if (data.error === "invalid access token") setAccessToken(null); // Clear invalid token
+        if (data && (data.error || data.detail)) {
+          if (data.error === "invalid access token") setAccessToken(null);
           throw new Error(data.error || data.detail);
         }
       }
@@ -392,7 +404,7 @@ export default function App() {
   const selectSymbol = async (url) => {
     setIsDownloading(true);
     try {
-      const res = await fetch(getInternalProxyUrl(url));
+      const res = await fetch(getProxyUrl(url));
       const blob = await res.blob();
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -407,7 +419,11 @@ export default function App() {
       };
       reader.readAsDataURL(blob);
     } catch (e) {
-      setEditingTile(prev => ({ ...prev, type: 'image', image: url }));
+      setEditingTile(prev => ({
+        ...prev,
+        type: 'image',
+        image: url
+      }));
       setShowImageSearch(false);
       setIsDownloading(false);
       setIsSearching(false);
@@ -474,10 +490,10 @@ export default function App() {
       className={`relative group flex flex-col items-center justify-center aspect-square rounded-2xl shadow-sm border-b-4 active:border-b-0 active:translate-y-1 transition-all cursor-pointer select-none overflow-hidden ${tile.color} border-black/10 hover:brightness-95`}
     >
       <div className="flex-1 min-h-0 w-full flex items-center justify-center p-1">
-        {tile.type === 'image' ? (
+        {tile.type === 'image' && (tile.image.startsWith('http') || tile.image.startsWith('data:')) ? (
           <img src={tile.image} alt={tile.label} className="max-w-full max-h-full object-contain pointer-events-none" />
         ) : (
-          <span className="text-5xl md:text-6xl select-none">{tile.image}</span>
+          <span className="text-5xl md:text-6xl select-none">{tile.type === 'emoji' ? tile.image : '🖼️'}</span>
         )}
       </div>
 
@@ -628,7 +644,7 @@ export default function App() {
               {/* Page Linking & Action Tile Features */}
               <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 space-y-3">
                 <div>
-                  <label className="block text-xs font-bold uppercase text-blue-600 mb-1 flex items-center gap-1"><ArrowRightCircle size={12} /> Link to Page</label>
+                  <label className="block text-xs font-bold uppercase text-blue-600 mb-1 flex items-center gap-1"><ArrowRightCircle size={12} /> Link to Page (Optional)</label>
                   <select
                     value={editingTile.linkToPage || ""}
                     onChange={e => setEditingTile({ ...editingTile, linkToPage: e.target.value })}
@@ -784,7 +800,31 @@ export default function App() {
           </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-8">
 
-            {/* Visuals */}
+            {/* Mode Settings */}
+            <section>
+              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><MessageSquare size={16} /> Interaction Mode</h3>
+              <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-sm">Sentence Builder</div>
+                    <p className="text-xs text-slate-500">Accumulate words in a strip before speaking</p>
+                  </div>
+                  <input type="checkbox" checked={config.settings.enableSentenceBuilder} onChange={e => updateSetting('enableSentenceBuilder', e.target.checked)} className="w-5 h-5 accent-blue-600" />
+                </div>
+                {config.settings.enableSentenceBuilder && (
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                    <div>
+                      <div className="font-bold text-sm">Speak on Select</div>
+                      <p className="text-xs text-slate-500">Speak each word as it is added</p>
+                    </div>
+                    <input type="checkbox" checked={config.settings.speakOnSelect} onChange={e => updateSetting('speakOnSelect', e.target.checked)} className="w-5 h-5 accent-blue-600" />
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <hr className="border-slate-100" />
+
             <section>
               <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><LayoutGrid size={16} /> Visuals</h3>
               <div className="space-y-4">
@@ -806,31 +846,6 @@ export default function App() {
                   </div>
                   <input type="checkbox" checked={config.settings.showLabels !== false} onChange={e => updateSetting('showLabels', e.target.checked)} className="w-5 h-5 accent-blue-600" />
                 </div>
-              </div>
-            </section>
-
-            <hr className="border-slate-100" />
-
-            {/* Mode Settings */}
-            <section>
-              <h3 className="text-sm font-bold uppercase text-slate-400 mb-3 flex items-center gap-2"><MessageSquare size={16} /> Interaction Mode</h3>
-              <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-bold text-sm">Sentence Builder</div>
-                    <p className="text-xs text-slate-500">Accumulate words in a strip before speaking</p>
-                  </div>
-                  <input type="checkbox" checked={config.settings.enableSentenceBuilder} onChange={e => updateSetting('enableSentenceBuilder', e.target.checked)} className="w-5 h-5 accent-blue-600" />
-                </div>
-                {config.settings.enableSentenceBuilder && (
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-200">
-                    <div>
-                      <div className="font-bold text-sm">Speak on Select</div>
-                      <p className="text-xs text-slate-500">Speak each word as it is added</p>
-                    </div>
-                    <input type="checkbox" checked={config.settings.speakOnSelect} onChange={e => updateSetting('speakOnSelect', e.target.checked)} className="w-5 h-5 accent-blue-600" />
-                  </div>
-                )}
               </div>
             </section>
 
