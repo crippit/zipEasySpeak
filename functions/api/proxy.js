@@ -66,7 +66,7 @@ export async function onRequest(context) {
 
     // Strictly block non-image content unless it is the specific API we trust
     if (!isOpenSymbolsAPI && !isImage) {
-      return new Response('Forbidden: Proxy only allows images or OpenSymbols API', { status: 403 });
+      return new Response('Forbidden: Proxy only allows images or OpenSymbols API. Stop being naughty.', { status: 403 });
     }
 
     // 8. Return Response
