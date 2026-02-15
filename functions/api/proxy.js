@@ -7,21 +7,18 @@ export async function onRequest(context) {
   }
 
   try {
-    // Fetch the requested resource (image or API result)
     const response = await fetch(targetUrl, {
       headers: {
         'User-Agent': 'ZipEasySpeak/1.0'
       }
     });
 
-    // Create a new response based on the fetched one
     const newResponse = new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
       headers: new Headers(response.headers)
     });
 
-    // Add CORS headers to allow your app to read the data
     newResponse.headers.set('Access-Control-Allow-Origin', '*');
     newResponse.headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
     newResponse.headers.set('Access-Control-Allow-Headers', 'Content-Type');

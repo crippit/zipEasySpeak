@@ -96,7 +96,6 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Deep merge settings to ensure new features (like gridSize) exist even in old saves
         return {
           ...DEFAULT_CONFIG,
           ...parsed,
@@ -110,11 +109,9 @@ export default function App() {
   });
 
   const [activePageId, setActivePageId] = useState(() => {
-    // Optional: Persist the last open page too
     return config.pages[0].id;
   });
 
-  // Save to localStorage whenever config changes
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
   }, [config]);
@@ -123,10 +120,10 @@ export default function App() {
   const [availableVoices, setAvailableVoices] = useState([]);
 
   // --- Sentence Builder State ---
-  const [sentence, setSentence] = useState([]); // Array of tile objects
+  const [sentence, setSentence] = useState([]);
 
   // --- Auth State ---
-  const [accessToken, setAccessToken] = useState(null); // The actual Access Token (not secret)
+  const [accessToken, setAccessToken] = useState(null);
 
   // --- UI State ---
   const [showSettings, setShowSettings] = useState(false);
@@ -310,57 +307,42 @@ export default function App() {
     }
   };
 
-  // --- Proxy & Search ---
-  const getProxyUrl = (url) => {
-    return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-  };
+  // --- Internal Proxy Logic ---
 
-  const getImageProxyUrl = (url) => {
-    return `https://images.weserv.nl/?url=${encodeURIComponent(url)}&output=webp`;
-  };
-
-  const getPostProxyUrl = (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`;
-
+  // Use our Cloudflare Function for fetching Auth Token (POST)
   const fetchAuthToken = async () => {
     let secret = config.settings.openSymbolsSecret;
-    try {
-      if (import.meta && import.meta.env) {
-        if (!secret) secret = import.meta.env.VITE_OPENSYMBOLS_SECRET || "";
-      }
-    } catch (e) { }
-
+    // Check environment variable (no import.meta check needed for CF build)
     if (!secret) {
-      throw new Error("Missing Shared Secret. Please add it in Settings.");
+      try { secret = import.meta.env.VITE_OPENSYMBOLS_SECRET || ""; } catch (e) { }
     }
 
-    try {
-      const tokenUrl = "https://www.opensymbols.org/api/v2/token";
-      const formData = new URLSearchParams();
-      formData.append('secret', secret.trim());
+    if (!secret) throw new Error("Missing Shared Secret");
 
-      const proxyRes = await fetch(getPostProxyUrl(tokenUrl), {
+    try {
+      const res = await fetch('/api/token', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: formData
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret: secret.trim() })
       });
 
-      if (!proxyRes.ok) throw new Error(`Auth Failed: ${proxyRes.status}`);
-
-      const data = await proxyRes.json();
-
-      if (data.access_token) {
-        console.log("Access Token received successfully.");
-        return data.access_token;
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Auth Error: ${text}`);
       }
 
-      throw new Error("No 'access_token' in response. Check Secret.");
-
+      const data = await res.json();
+      if (data.access_token) return data.access_token;
+      throw new Error("No token returned");
     } catch (e) {
-      console.error("Token exchange failed", e);
+      console.error("Auth failed:", e);
       throw e;
     }
+  };
+
+  // Use our Cloudflare Function for fetching Search Results/Images (GET)
+  const getInternalProxyUrl = (url) => {
+    return `/api/proxy?url=${encodeURIComponent(url)}`;
   };
 
   const searchSymbols = async () => {
@@ -369,40 +351,33 @@ export default function App() {
     setSearchResults([]);
 
     try {
+      // 1. Get Token
       let token = accessToken;
-
       if (!token) {
         try {
           token = await fetchAuthToken();
           setAccessToken(token);
         } catch (e) {
-          console.log("Token fetch failed, trying without...", e);
+          console.log("Token fetch failed", e);
+          // Proceeding without token might fail, but we'll try
         }
       }
 
+      // 2. Search
       let target = `https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(searchQuery)}`;
       if (token) target += `&access_token=${token}`;
 
-      const res = await fetch(getProxyUrl(target));
+      const res = await fetch(getInternalProxyUrl(target));
+      if (!res.ok) throw new Error("API Fetch Error");
 
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`API Error: ${res.status} ${txt}`);
-      }
-
-      let data;
-      try {
-        data = await res.json();
-      } catch (jsonErr) {
-        throw new Error("Invalid JSON response");
-      }
+      const data = await res.json();
 
       if (Array.isArray(data)) {
         setSearchResults(data);
       } else {
         setSearchResults([]);
-        if (data && (data.error || data.detail)) {
-          if (data.error === "invalid access token") setAccessToken(null);
+        if (data.error || data.detail) {
+          if (data.error === "invalid access token") setAccessToken(null); // Clear invalid token
           throw new Error(data.error || data.detail);
         }
       }
@@ -417,7 +392,7 @@ export default function App() {
   const selectSymbol = async (url) => {
     setIsDownloading(true);
     try {
-      const res = await fetch(getImageProxyUrl(url));
+      const res = await fetch(getInternalProxyUrl(url));
       const blob = await res.blob();
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -432,11 +407,7 @@ export default function App() {
       };
       reader.readAsDataURL(blob);
     } catch (e) {
-      setEditingTile(prev => ({
-        ...prev,
-        type: 'image',
-        image: url
-      }));
+      setEditingTile(prev => ({ ...prev, type: 'image', image: url }));
       setShowImageSearch(false);
       setIsDownloading(false);
       setIsSearching(false);
